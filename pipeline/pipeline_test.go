@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -22,9 +23,19 @@ func init() {
 
 func TestIngestPipelineFromFile(t *testing.T) {
 	source := NewFileSrcElement("source", TestH265FileName)
-	pipeline, err := NewIngestPipelineFromSource("ingest-pipeline", source)
+	decoded := NewDecodeElement("bin")
+	assert.Nil(t, source.Build())
+	assert.Nil(t, decoded.Build())
+	assert.Nil(t, source.Link(decoded))
+	pipeline, err := NewIngestPipelineFromSource("ingest-pipeline", decoded)
 	assert.Nil(t, err)
 	loop := glib.NewMainLoop(glib.MainContextDefault(), false)
-	err = pipeline.Start(loop)
-	assert.Nil(t, err)
+	go func() {
+		err = pipeline.Start(loop)
+		assert.Nil(t, err)
+	}()
+
+	time.Sleep(5 * time.Second)
+
+	loop.Quit()
 }

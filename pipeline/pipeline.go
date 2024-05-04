@@ -5,12 +5,13 @@ import (
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"log"
+	"time"
 )
 
 // Pipeline wrapper around go-gst
 type Pipeline struct {
 	name     string
-	elements []Element
+	elements []*Element
 	source   *Element
 	pipeline *gst.Pipeline
 }
@@ -69,51 +70,51 @@ func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error
 	//	Factory: "rtph265depay",
 	//	Name:    "depay",
 	//}
-	parser := Element{
+	parser := &Element{
 		Factory: "h265parse",
 		Name:    "parser",
 	}
-	decoder := Element{
+	decoder := &Element{
 		Factory: "avdec_h265",
 		Name:    "decoder",
 	}
-	converter := Element{
+	converter := &Element{
 		Factory: "videoconvert",
 		Name:    "converter",
 	}
 
-	x264enc := Element{
+	x264enc := &Element{
 		Factory: "x264enc",
 		Name:    "enc",
 		Properties: map[string]interface{}{
-			"speed-preset": "ultrafast",
-			"pass":         "pass1",
+			//"speed-preset": 1,
+			"pass": 17,
 		},
 	}
 
-	sink := Element{
+	sink := &Element{
 		Factory: "splitmuxsink",
 		Name:    "sink",
 		Properties: map[string]interface{}{
-			"target-duration": 1,
-			"max-size-bytes":  uint64(10000),
-			"async-finalize":  false,
-			"location":        "data/segment%05d.ts",
+			"max-size-time":  uint64((time.Second * 1).Nanoseconds()),
+			"max-size-bytes": uint64(10000),
+			"async-finalize": false,
+			"location":       "segment%05d.ts",
 		},
 	}
-	h264parse := Element{
-		Factory: "h264parse",
-		Name:    "parse",
-	}
+	//h264parse := &Element{
+	//	Factory: "h264parse",
+	//	Name:    "parse",
+	//}
 	pipeline := &Pipeline{
 		name: name,
-		elements: []Element{
+		elements: []*Element{
 			//depay,
 			parser,
 			decoder,
 			converter,
 			x264enc,
-			h264parse,
+			//h264parse,
 			sink,
 		},
 		source: source,
@@ -121,6 +122,21 @@ func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error
 
 	if err := pipeline.Build(); err != nil {
 		return nil, err
+	}
+
+	links := []struct {
+		left  *Element
+		right *Element
+	}{
+		{parser, decoder},
+		{decoder, converter},
+		{converter, x264enc},
+		{x264enc, sink},
+	}
+	for _, link := range links {
+		if err := link.left.Link(link.right); err != nil {
+			return nil, err
+		}
 	}
 
 	counter := 0
@@ -133,13 +149,6 @@ func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error
 	if err != nil {
 		return nil, err
 	}
-
-	//depay.Link(&parser)
-	parser.Link(&decoder)
-	decoder.Link(&converter)
-	converter.Link(&x264enc)
-	x264enc.Link(&h264parse)
-	h264parse.Link(&sink)
 
 	return pipeline, nil
 }
