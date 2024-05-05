@@ -97,19 +97,18 @@ func NewSegmentPipeline(name string, params SegmentPipelineParams, otherElements
 		Name:    "converter",
 	}
 
-	x264enc := &Element{
-		Factory: "x264enc",
+	x265enc := &Element{
+		Factory: "x265enc",
 		Name:    "enc",
 		Properties: map[string]interface{}{
-			//"speed-preset": 1,
-			"pass":        17,
-			"tune":        uint(4),
-			"key-int-max": uint(30),
+			"speed-preset": 1,
+			"tune":         4,
+			"key-int-max":  int(30),
 		},
 	}
 
 	parser := &Element{
-		Factory: "h264parse",
+		Factory: "h265parse",
 		Name:    "",
 	}
 
@@ -128,7 +127,7 @@ func NewSegmentPipeline(name string, params SegmentPipelineParams, otherElements
 		name: name,
 		elements: append([]*Element{
 			converter,
-			x264enc,
+			x265enc,
 			parser,
 			sink,
 		}, otherElements...),
@@ -155,8 +154,8 @@ func NewSegmentPipeline(name string, params SegmentPipelineParams, otherElements
 	}
 
 	links := []Link{
-		{converter, x264enc},
-		{x264enc, parser},
+		{converter, x265enc},
+		{x265enc, parser},
 		{parser, sink},
 	}
 	for index := 1; index < len(otherElements); index++ {

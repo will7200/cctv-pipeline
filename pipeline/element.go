@@ -36,6 +36,9 @@ func (e *Element) Build() error {
 				if err != nil {
 					return err
 				}
+				if _, ok := v.(int); !ok {
+					return fmt.Errorf("property %s expecting an int", k)
+				}
 				value.SetEnum(v.(int))
 				if err = element.SetPropertyValue(k, value); err != nil {
 					return err
@@ -44,6 +47,9 @@ func (e *Element) Build() error {
 				value, err = glib.ValueInit(t)
 				if err != nil {
 					return err
+				}
+				if _, ok := v.(uint); !ok {
+					return fmt.Errorf("property %s expecting an uint", k)
 				}
 				value.SetFlags(v.(uint))
 				if err = element.SetPropertyValue(k, value); err != nil {
