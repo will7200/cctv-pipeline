@@ -16,6 +16,9 @@ type Element struct {
 }
 
 func (e *Element) Build() error {
+	if e.el != nil {
+		return nil
+	}
 	element, err := gst.NewElementWithName(e.Factory, e.Name)
 	if err != nil {
 		return err
@@ -34,6 +37,15 @@ func (e *Element) Build() error {
 					return err
 				}
 				value.SetEnum(v.(int))
+				if err = element.SetPropertyValue(k, value); err != nil {
+					return err
+				}
+			case t.IsA(glib.TYPE_FLAGS) == true:
+				value, err = glib.ValueInit(t)
+				if err != nil {
+					return err
+				}
+				value.SetFlags(v.(uint))
 				if err = element.SetPropertyValue(k, value); err != nil {
 					return err
 				}

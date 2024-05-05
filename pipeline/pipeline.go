@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// Link struct holds elements that should
+// be linked left -> right
+type Link struct {
+	left  *Element
+	right *Element
+}
+
 // Pipeline wrapper around go-gst
 type Pipeline struct {
 	name     string
@@ -28,22 +35,24 @@ func (p *Pipeline) Build() error {
 			return err
 		}
 	}
+	for index := range p.elements {
+		err := p.pipeline.Add(p.elements[index].el)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 	var err error
 	pipeline := p.pipeline
-	// Start the pipeline
-	err = pipeline.SetState(gst.StatePlaying)
-	if err != nil {
-		return err
-	}
 
 	// Add a message handler to the pipeline bus, logging interesting information to the console.
 	pipeline.GetPipelineBus().AddWatch(func(msg *gst.Message) bool {
 		switch msg.Type() {
 		case gst.MessageEOS: // When end-of-stream is received stop the main loop
+			log.Println("End of Stream")
 			pipeline.BlockSetState(gst.StateNull)
 			mainLoop.Quit()
 		case gst.MessageError: // Error messages are always fatal
@@ -60,24 +69,29 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 		}
 		return true
 	})
+	// Start the pipeline
+	err = pipeline.SetState(gst.StatePlaying)
+	if err != nil {
+		return err
+	}
 
 	// Block on the main loop
 	return mainLoop.RunError()
 }
 
-func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error) {
-	//depay := Element{
-	//	Factory: "rtph265depay",
-	//	Name:    "depay",
-	//}
-	parser := &Element{
-		Factory: "h265parse",
-		Name:    "parser",
-	}
-	decoder := &Element{
-		Factory: "avdec_h265",
-		Name:    "decoder",
-	}
+type SegmentPipeline struct {
+	*Pipeline
+
+	// segment counter
+	SegmentCounter uint32
+}
+
+type SegmentPipelineParams struct {
+	// videoDuration is the amount of time of how long each segment should be
+	videoDuration time.Duration
+}
+
+func NewSegmentPipeline(name string, params SegmentPipelineParams, otherElements ...*Element) (sg *SegmentPipeline, err error) {
 	converter := &Element{
 		Factory: "videoconvert",
 		Name:    "converter",
@@ -88,50 +102,65 @@ func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error
 		Name:    "enc",
 		Properties: map[string]interface{}{
 			//"speed-preset": 1,
-			"pass": 17,
+			"pass":        17,
+			"tune":        uint(4),
+			"key-int-max": uint(30),
 		},
+	}
+
+	parser := &Element{
+		Factory: "h264parse",
+		Name:    "",
 	}
 
 	sink := &Element{
 		Factory: "splitmuxsink",
 		Name:    "sink",
 		Properties: map[string]interface{}{
-			"max-size-time":  uint64((time.Second * 1).Nanoseconds()),
-			"max-size-bytes": uint64(10000),
-			"async-finalize": false,
+			// one second currently
+			"max-size-time":  uint64(params.videoDuration.Nanoseconds()),
+			"async-finalize": true,
 			"location":       "segment%05d.ts",
+			"muxer-factory":  "mpegtsmux",
 		},
 	}
-	//h264parse := &Element{
-	//	Factory: "h264parse",
-	//	Name:    "parse",
-	//}
 	pipeline := &Pipeline{
 		name: name,
-		elements: []*Element{
-			//depay,
-			parser,
-			decoder,
+		elements: append([]*Element{
 			converter,
 			x264enc,
-			//h264parse,
+			parser,
 			sink,
-		},
-		source: source,
+		}, otherElements...),
+		source: otherElements[0],
 	}
 
 	if err := pipeline.Build(); err != nil {
 		return nil, err
 	}
 
-	links := []struct {
-		left  *Element
-		right *Element
-	}{
-		{parser, decoder},
-		{decoder, converter},
+	if _, err := pipeline.source.el.Connect("pad-added", func(src *gst.Element, pad *gst.Pad) {
+		log.Printf("Pad '%s' has caps %s", pad.GetName(), pad.GetCurrentCaps().String())
+		if pad.IsLinked() {
+			log.Printf("Pad '%s' is already linked", pad.GetName())
+			return
+		}
+
+		err := src.Link(converter.el)
+		if err != nil {
+			log.Println(err)
+		}
+	}); err != nil {
+		return nil, err
+	}
+
+	links := []Link{
 		{converter, x264enc},
-		{x264enc, sink},
+		{x264enc, parser},
+		{parser, sink},
+	}
+	for index := 1; index < len(otherElements); index++ {
+		links = append(links, Link{otherElements[index], otherElements[index-1]})
 	}
 	for _, link := range links {
 		if err := link.left.Link(link.right); err != nil {
@@ -139,10 +168,13 @@ func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error
 		}
 	}
 
-	counter := 0
-	_, err := sink.el.Connect("format-location", func(g *gst.Element) string {
-		counter++
-		name := fmt.Sprintf("segment%05d.ts", counter)
+	sg = new(SegmentPipeline)
+	sg.Pipeline = pipeline
+	sg.SegmentCounter = 0
+
+	_, err = sink.el.Connect("format-location", func(g *gst.Element) string {
+		sg.SegmentCounter++
+		name := fmt.Sprintf("segment%05d.ts", sg.SegmentCounter)
 		log.Println("New file created:", name)
 		return name
 	})
@@ -150,5 +182,5 @@ func NewIngestPipelineFromSource(name string, source *Element) (*Pipeline, error
 		return nil, err
 	}
 
-	return pipeline, nil
+	return
 }
