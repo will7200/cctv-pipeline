@@ -21,6 +21,7 @@ type Pipeline struct {
 	elements []*Element
 	source   *Element
 	pipeline *gst.Pipeline
+	watches  []func(message *gst.Message) bool
 }
 
 func (p *Pipeline) Build() error {
@@ -44,6 +45,10 @@ func (p *Pipeline) Build() error {
 	return nil
 }
 
+func (p *Pipeline) AddWatch(watch func(element *gst.Message) bool) {
+	p.watches = append(p.watches, watch)
+}
+
 func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 	var err error
 	pipeline := p.pipeline
@@ -65,7 +70,11 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 		default:
 			// All messages implement a Stringer. However, this is
 			// typically an expensive thing to do and should be avoided.
-			log.Println(msg.String())
+			//log.Println(msg.String())
+
+		}
+		for _, watch := range p.watches {
+			watch(msg)
 		}
 		return true
 	})
@@ -84,6 +93,8 @@ type SegmentPipeline struct {
 
 	// segment counter
 	SegmentCounter uint32
+	// File Segment Tracker
+	fileSegmentTracker bool
 }
 
 type SegmentPipelineParams struct {
@@ -131,7 +142,8 @@ func NewSegmentPipeline(name string, params SegmentPipelineParams, otherElements
 			parser,
 			sink,
 		}, otherElements...),
-		source: otherElements[0],
+		source:  otherElements[0],
+		watches: []func(message *gst.Message) bool{},
 	}
 
 	if err := pipeline.Build(); err != nil {
@@ -174,8 +186,29 @@ func NewSegmentPipeline(name string, params SegmentPipelineParams, otherElements
 	_, err = sink.el.Connect("format-location", func(g *gst.Element) string {
 		sg.SegmentCounter++
 		name := fmt.Sprintf("segment%05d.ts", sg.SegmentCounter)
-		log.Println("New file created:", name)
 		return name
+	})
+	sg.Pipeline.AddWatch(func(msg *gst.Message) bool {
+		if msg.Source() != "sink" {
+			return true
+		}
+		switch msg.Type() {
+		case gst.MessageElement:
+			structure := msg.GetStructure()
+			// We get two events, one for the start and one for the end
+			if val, err := structure.GetValue("location"); err == nil {
+				if sg.fileSegmentTracker == false {
+					sg.fileSegmentTracker = true
+					return true
+				} else {
+					sg.fileSegmentTracker = false
+				}
+				runTime, _ := structure.GetValue("running-time")
+				gRunTime := runTime.(uint64)
+				log.Printf("New file created %s with current run-time of %v\n", val, gRunTime)
+			}
+		}
+		return true
 	})
 	if err != nil {
 		return nil, err
