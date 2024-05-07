@@ -5,12 +5,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	flag "github.com/spf13/pflag"
 
 	"github.com/will7200/cctver/internal/version"
+	"github.com/will7200/cctver/pipeline"
 )
 
 var (
@@ -20,6 +22,14 @@ var (
 		flag.PrintDefaults()
 	}
 	envPrefix = "cctver-"
+)
+
+// command specific
+var (
+	showVersion = flagSet.BoolP("version", "v", false, "prints the version of the cctver")
+	help        = flagSet.BoolP("help", "h", false, "show this help message")
+	debug       = flagSet.BoolP("debug", "d", false, "debug logging")
+	gstDebug    = flagSet.Bool("gst-debug", false, "debug gst logging")
 )
 
 // flagNameFromEnvironmentName gets the variable from the environment
@@ -32,15 +42,8 @@ func flagNameFromEnvironmentName(s string) string {
 	}
 	return ""
 }
-
-func main() {
+func init() {
 	flag.Usage = internalUsage
-
-	var (
-		showVersion = flagSet.BoolP("version", "v", false, "prints the version of the cctver")
-		help        = flagSet.BoolP("help", "h", false, "show this help message")
-		debug       = flagSet.BoolP("debug", "d", false, "debug logging")
-	)
 
 	flagSet.VisitAll(func(f *flag.Flag) {
 		if flag.Lookup(f.Name) == nil {
@@ -61,6 +64,9 @@ func main() {
 		}
 	}
 	flag.Parse()
+}
+
+func main() {
 
 	if *showVersion {
 		fmt.Println("cctver version", version.Version)
@@ -76,6 +82,9 @@ func main() {
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	if *debug {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	}
+	if *gstDebug {
+		gst.SetLogFunction(pipeline.GSTLogFunction)
 	}
 
 }
