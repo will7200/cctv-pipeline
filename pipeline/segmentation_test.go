@@ -2,11 +2,16 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/vansante/go-ffprobe.v2"
 
 	"github.com/go-gst/go-glib/glib"
 )
@@ -21,7 +26,7 @@ func TestSegmentPipelineFromFile(t *testing.T) {
 	spipline, err := NewSegmentationPipeline(SegmentPipelineParams{
 		videoDuration:         time.Second,
 		cameraId:              "test",
-		segmentBasePath:       "./tmp",
+		segmentBasePath:       fmt.Sprintf("./tmp/%s", uuid.New().String()[:10]),
 		ensureSegmentDuration: time.Second,
 	})
 	assert.Nil(t, err)
@@ -55,4 +60,16 @@ func TestSegmentPipelineFromFile(t *testing.T) {
 	loop.Quit()
 
 	assert.Equal(t, spipline.SegmentCounter, uint32(10))
+
+	entries, err := filepath.Glob(fmt.Sprintf("%s/*/*/*/*/*.ts", spipline.params.segmentBasePath))
+	assert.Nil(t, err)
+	for _, val := range entries {
+		ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelFn()
+		data, err := ffprobe.ProbeURL(ctx, val)
+		assert.Nil(t, err)
+		duration, err := strconv.ParseFloat(data.Streams[0].Duration, 64)
+		assert.Nil(t, err)
+		assert.InDeltaf(t, duration, 1, .1, "Expected duration to be around 1")
+	}
 }
