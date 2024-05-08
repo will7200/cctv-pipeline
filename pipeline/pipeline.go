@@ -112,6 +112,11 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 		}
 		return true
 	})
+	for _, partial := range p.partials {
+		if err = partial.Start(p); err != nil {
+			return err
+		}
+	}
 	// Start the pipeline
 	err = pipeline.SetState(gst.StatePlaying)
 	if err != nil {
@@ -120,6 +125,14 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 
 	// Block on the main loop
 	return mainLoop.RunError()
+}
+
+func (p *Pipeline) Finish() {
+	for _, partial := range p.partials {
+		if err := partial.Stop(p); err != nil {
+			log.Err(err).Msg("unable to stop partial pipeline process")
+		}
+	}
 }
 
 // NewPipeline returns a new pipeline given a name

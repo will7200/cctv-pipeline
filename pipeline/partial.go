@@ -10,4 +10,8 @@ type PartialPipeline interface {
 	// Connect is called to connect a target element from one segment to
 	// another
 	Connect(source *Element) error
+	// Start is called when the pipeline has started processing
+	Start(pipeline *Pipeline) error
+	// Stop is called when the pipeline has finished processing
+	Stop(pipeline *Pipeline) error
 }

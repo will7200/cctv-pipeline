@@ -18,7 +18,12 @@ func TestSegmentPipelineFromFile(t *testing.T) {
 	source := NewFileSrcElement("source", TestH265FileName)
 	decoded := NewDecodeElement("bin")
 
-	spipline, err := NewSegmentationPipeline(SegmentPipelineParams{videoDuration: time.Second})
+	spipline, err := NewSegmentationPipeline(SegmentPipelineParams{
+		videoDuration:         time.Second,
+		cameraId:              "test",
+		segmentBasePath:       "./tmp",
+		ensureSegmentDuration: time.Second,
+	})
 	assert.Nil(t, err)
 
 	pipeline := NewPipeline("segment-pipeline")
@@ -40,6 +45,7 @@ func TestSegmentPipelineFromFile(t *testing.T) {
 		err = pipeline.Start(loop)
 		assert.Nil(t, err)
 		cancel()
+		pipeline.Finish()
 	}()
 
 	select {

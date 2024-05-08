@@ -2,7 +2,10 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-gst/go-gst/gst"
@@ -21,6 +24,12 @@ type SegmentationPipelineElements struct {
 type SegmentPipelineParams struct {
 	// videoDuration is the amount of time of how long each segment should be
 	videoDuration time.Duration
+	// segmentBasePath base file path
+	segmentBasePath string
+	// cameraId this camera
+	cameraId string
+	// ensureSegmentDuration checks that a segment has been produced in the given interval
+	ensureSegmentDuration time.Duration
 }
 
 // SegmentationPipeline will split a given stream into smaller parts
@@ -35,6 +44,11 @@ type SegmentationPipeline struct {
 	params SegmentPipelineParams
 	// source element
 	source *Element
+	// lastFinishedSegment is the time of the last finished segment
+	lastFinishedSegment time.Time
+	// quit holds a chan to send to stop checking this part of the pipeline
+	quit  chan struct{}
+	mutex sync.RWMutex
 }
 
 // NewSegmentationPipeline create a new segmentation pipeline
@@ -42,6 +56,8 @@ func NewSegmentationPipeline(params SegmentPipelineParams) (sg *SegmentationPipe
 	sg = new(SegmentationPipeline)
 	sg.SegmentCounter = 0
 	sg.params = params
+	sg.lastFinishedSegment = time.Now()
+	sg.mutex = sync.RWMutex{}
 
 	sg.Elements.converter = &Element{
 		Factory: "videoconvert",
@@ -108,6 +124,9 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 			runTime, _ := structure.GetValue("running-time")
 			gRunTime := runTime.(uint64)
 			log.Printf("New file created %s with current run-time of %v", val, gRunTime)
+			sg.mutex.Lock()
+			sg.lastFinishedSegment = time.Now()
+			sg.mutex.Unlock()
 		}
 	}
 	return true
@@ -115,7 +134,17 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 
 func (sg *SegmentationPipeline) HandleFormatLocation(g *gst.Element) string {
 	sg.SegmentCounter++
-	name := fmt.Sprintf("segment%05d.ts", sg.SegmentCounter)
+	current := time.Now().UTC()
+	dir := fmt.Sprintf("%s/%s/%s",
+		sg.params.segmentBasePath,
+		sg.params.cameraId,
+		current.Format("2006/01/02"),
+	)
+	err := os.MkdirAll(dir, os.FileMode(0744))
+	if err != nil {
+		log.Err(err).Msg("unable to create directory")
+	}
+	name := fmt.Sprintf(filepath.Join(dir, "%s.ts"), current.Format("15-04-05"))
 	return name
 }
 
@@ -160,5 +189,37 @@ func (sg *SegmentationPipeline) Connect(source *Element) error {
 	}); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (sg *SegmentationPipeline) Start(pipeline *Pipeline) error {
+	ticker := time.NewTicker(sg.params.ensureSegmentDuration)
+	// multiple the duration by three to allow processing delay
+	wiggleRoom := sg.params.ensureSegmentDuration * 3
+	sg.quit = make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				sg.mutex.RLock()
+				lastSegmentGenerated := time.Now().Sub(sg.lastFinishedSegment)
+				sg.mutex.RUnlock()
+				log.Debug().Dur("last-segment-generated-ago", lastSegmentGenerated).Msg("checking last segment generated")
+				if lastSegmentGenerated > wiggleRoom {
+					// TODO: do we just crash here
+					log.Error().Msg("segment has not been processed recently")
+				}
+			case <-sg.quit:
+				log.Debug().Msg("Exiting segment generation check")
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+	return nil
+}
+
+func (sg *SegmentationPipeline) Stop(pipeline *Pipeline) error {
+	close(sg.quit)
 	return nil
 }
