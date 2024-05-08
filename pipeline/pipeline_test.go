@@ -2,12 +2,13 @@ package pipeline
 
 import (
 	"context"
-	"github.com/go-gst/go-glib/glib"
-	"github.com/go-gst/go-gst/gst"
 	"os"
 	"path"
 	"testing"
 	"time"
+
+	"github.com/go-gst/go-glib/glib"
+	"github.com/go-gst/go-gst/gst"
 
 	"github.com/stretchr/testify/assert"
 )

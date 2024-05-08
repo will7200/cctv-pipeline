@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 )
