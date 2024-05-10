@@ -8,6 +8,7 @@ package tools
 // This ensures that all systems use the same version of tools in addition to regular dependencies.
 
 import (
+	_ "github.com/daixiang0/gci"
 	_ "github.com/golangci/golangci-lint/cmd/golangci-lint"
 	_ "golang.org/x/tools/cmd/goimports"
 	_ "golang.org/x/vuln/cmd/govulncheck"
