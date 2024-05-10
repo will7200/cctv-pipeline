@@ -29,6 +29,15 @@ type ThumbnailParams struct {
 	segmentBasePath string
 	// cameraId this camera
 	cameraId string
+	// width of image, defaults to 1280 if zero
+	width uint
+	// height of image, defaults to 720 if zero
+	height uint
+}
+
+// Caps generates *gst.Caps for the provided image dimension
+func (tp ThumbnailParams) Caps() *gst.Caps {
+	return gst.NewCapsFromString(fmt.Sprintf("video/x-raw,width=%d,height=%d", tp.width, tp.height))
 }
 
 // ThumbnailPipeline will split a given stream into smaller parts
@@ -39,9 +48,7 @@ type ThumbnailPipeline struct {
 	params ThumbnailParams
 	// source element
 	source *Element
-	// samples
-	samples []*gst.Sample
-	mutex   sync.RWMutex
+	mutex  sync.RWMutex
 }
 
 // NewThumbnailPipeline create a new segmentation pipeline
@@ -49,6 +56,13 @@ func NewThumbnailPipeline(params ThumbnailParams) (sg *ThumbnailPipeline, err er
 	sg = new(ThumbnailPipeline)
 	sg.params = params
 	sg.mutex = sync.RWMutex{}
+
+	if sg.params.height == 0 {
+		sg.params.height = 720
+	}
+	if sg.params.width == 0 {
+		sg.params.width = 1280
+	}
 
 	sg.Elements.converter = &Element{
 		Factory: "videoconvert",
@@ -102,7 +116,7 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 	links := []LinkWithCaps{
 		{th.Elements.appsrc, th.Elements.converter, nil},
 		{th.Elements.converter, th.Elements.scaler, nil},
-		{th.Elements.scaler, th.Elements.webpenc, gst.NewCapsFromString("video/x-raw,width=1280,height=720")},
+		{th.Elements.scaler, th.Elements.webpenc, th.params.Caps()},
 		{th.Elements.webpenc, th.Elements.sink, nil},
 	}
 	for _, link := range links {
