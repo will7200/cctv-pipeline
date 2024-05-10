@@ -2,73 +2,84 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
-	"github.com/google/uuid"
+	"github.com/go-gst/go-gst/gst"
 	"github.com/stretchr/testify/assert"
-	"gopkg.in/vansante/go-ffprobe.v2"
 )
 
-func TestSegmentPipelineFromFile(t *testing.T) {
+func TestThumbnailPipelineFromFile(t *testing.T) {
 	_, err := os.Stat(TestH265FileName)
 	assert.Nil(t, err)
 	// setup pipeline
 	source := NewFileSrcElement("source", TestH265FileName)
 	decoded := NewDecodeElement("bin")
 
+	segmentBase := newSegmentBase()
+
+	tpipeline, err := NewThumbnailPipeline(ThumbnailParams{
+		segmentBasePath: segmentBase,
+		cameraId:        TestCameraID,
+	})
+	assert.Nil(t, err)
 	spipline, err := NewSegmentationPipeline(SegmentPipelineParams{
 		videoDuration:         time.Second,
-		cameraId:              "test",
-		segmentBasePath:       fmt.Sprintf("./tmp/%s", uuid.New().String()[:10]),
+		cameraId:              TestCameraID,
+		segmentBasePath:       segmentBase,
 		ensureSegmentDuration: time.Second,
+		onNewSource: func(caps *gst.Caps) {
+			tpipeline.Elements.src.SetCaps(caps)
+		},
+		onNewBuffer: tpipeline.OnBuffer,
 	})
 	assert.Nil(t, err)
 
 	pipeline := NewPipeline("segment-pipeline")
 	pipeline.AddPartialPipeline(spipline)
+	//pipeline.AddPartialPipeline(tpipeline)
 	pipeline.AddElements(source, decoded)
 	assert.Nil(t, pipeline.Build())
 	assert.Nil(t, source.Link(decoded))
 	assert.Nil(t, spipline.Connect(decoded))
 
+	thumbnail := NewPipeline("thumbnail-pipeline")
+	thumbnail.AddPartialPipeline(tpipeline)
+	assert.Nil(t, thumbnail.Build())
 	// setup context
 	waitFor := time.Second * 30
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, waitFor)
 	time.AfterFunc(waitFor, cancel)
 
+	go func() {
+		assert.Nil(t, runPipeline(ctx, thumbnail))
+	}()
+	assert.Nil(t, runPipeline(ctx, pipeline))
+	cancel()
+}
+
+func runPipeline(ctx context.Context, pipeline *Pipeline) error {
+	pipeline.pipeline.Ref()
+	defer pipeline.pipeline.Unref()
+	var err error
+	complete := make(chan struct{})
 	// start loop
 	loop := glib.NewMainLoop(glib.MainContextDefault(), false)
 	go func() {
 		err = pipeline.Start(loop)
-		assert.Nil(t, err)
-		cancel()
 		pipeline.Finish()
+		complete <- struct{}{}
 	}()
 
 	select {
 	case <-ctx.Done():
 		break
+	case <-complete:
+		break
 	}
 	loop.Quit()
-
-	assert.Equal(t, spipline.SegmentCounter, uint32(10))
-
-	entries, err := filepath.Glob(fmt.Sprintf("%s/*/*/*/*/*.ts", spipline.params.segmentBasePath))
-	assert.Nil(t, err)
-	for _, val := range entries {
-		ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancelFn()
-		data, err := ffprobe.ProbeURL(ctx, val)
-		assert.Nil(t, err)
-		duration, err := strconv.ParseFloat(data.Streams[0].Duration, 64)
-		assert.Nil(t, err)
-		assert.InDeltaf(t, duration, 1, .1, "Expected duration to be around 1")
-	}
+	return err
 }

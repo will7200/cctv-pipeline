@@ -1,12 +1,18 @@
 package pipeline
 
 import (
+	"fmt"
 	"os"
 	"path"
 
 	"github.com/go-gst/go-gst/gst"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+)
+
+const (
+	TestCameraID = "test"
 )
 
 func getEnv(key, fallback string) string {
@@ -25,6 +31,10 @@ var (
 func init() {
 	// Initialize GStreamer
 	gst.Init(nil)
-	//gst.SetLogFunction(GSTLogFunction)
+	// gst.SetLogFunction(GSTLogFunction)
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+}
+
+func newSegmentBase() string {
+	return fmt.Sprintf("./tmp/%s", uuid.New().String()[:10])
 }

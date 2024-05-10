@@ -1,10 +1,9 @@
 package pipeline
 
 import (
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog/log"
-
-	"github.com/go-gst/go-glib/glib"
 )
 
 // Link struct holds elements that should
@@ -12,6 +11,12 @@ import (
 type Link struct {
 	left  *Element
 	right *Element
+}
+
+type LinkWithCaps struct {
+	left   *Element
+	right  *Element
+	filter *gst.Caps
 }
 
 // Pipeline wrapper around go-gst
@@ -116,6 +121,10 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 		if err = partial.Start(p); err != nil {
 			return err
 		}
+	}
+	err = pipeline.SetState(gst.StateReady)
+	if err != nil {
+		return err
 	}
 	// Start the pipeline
 	err = pipeline.SetState(gst.StatePlaying)

@@ -30,6 +30,12 @@ type SegmentPipelineParams struct {
 	cameraId string
 	// ensureSegmentDuration checks that a segment has been produced in the given interval
 	ensureSegmentDuration time.Duration
+	// callback for when a new sample is available
+	onNewSample func(sample *gst.Sample)
+	// callback for new buffer
+	onNewBuffer func(buffer *gst.Buffer)
+	// callback for new source
+	onNewSource func(caps *gst.Caps)
 }
 
 // SegmentationPipeline will split a given stream into smaller parts
@@ -46,6 +52,8 @@ type SegmentationPipeline struct {
 	source *Element
 	// lastFinishedSegment is the time of the last finished segment
 	lastFinishedSegment time.Time
+	// holds the first frame available for the current segment
+	frameBuffer *gst.Buffer
 	// quit holds a chan to send to stop checking this part of the pipeline
 	quit  chan struct{}
 	mutex sync.RWMutex
@@ -126,13 +134,18 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 			log.Printf("New file created %s with current run-time of %v", val, gRunTime)
 			sg.mutex.Lock()
 			sg.lastFinishedSegment = time.Now()
+			if sg.frameBuffer != nil && sg.params.onNewBuffer != nil {
+				sg.params.onNewBuffer(sg.frameBuffer)
+				sg.frameBuffer.Unref()
+				sg.frameBuffer = nil
+			}
 			sg.mutex.Unlock()
 		}
 	}
 	return true
 }
 
-func (sg *SegmentationPipeline) HandleFormatLocation(g *gst.Element) string {
+func (sg *SegmentationPipeline) HandleFormatLocation(g *gst.Element, val uint, sample *gst.Sample) string {
 	sg.SegmentCounter++
 	current := time.Now().UTC()
 	dir := fmt.Sprintf("%s/%s/%s",
@@ -145,6 +158,11 @@ func (sg *SegmentationPipeline) HandleFormatLocation(g *gst.Element) string {
 		log.Err(err).Msg("unable to create directory")
 	}
 	name := fmt.Sprintf(filepath.Join(dir, "%s.ts"), current.Format("15-04-05"))
+	if sg.params.onNewSample != nil {
+		sample.Ref()
+		sg.params.onNewSample(sample)
+		sample.Unref()
+	}
 	return name
 }
 
@@ -162,7 +180,7 @@ func (sg *SegmentationPipeline) Build(pipeline *Pipeline) error {
 		}
 	}
 
-	_, err = sg.Elements.sink.el.Connect("format-location", sg.HandleFormatLocation)
+	_, err = sg.Elements.sink.el.Connect("format-location-full", sg.HandleFormatLocation)
 	if err != nil {
 		return err
 	}
@@ -184,8 +202,20 @@ func (sg *SegmentationPipeline) Connect(source *Element) error {
 		}
 		err := src.Link(sg.Elements.converter.el)
 		if err != nil {
-			log.Err(err)
+			log.Err(err).Msg("unable to link")
+			return
 		}
+		// emit that we get a new source and update the
+		// target capabilities
+		sg.params.onNewSource(pad.GetCurrentCaps())
+		// add a probe to get the latest available buffer
+		pad.AddProbe(gst.PadProbeTypeBuffer, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+			if sg.frameBuffer == nil {
+				sg.frameBuffer = info.GetBuffer()
+				sg.frameBuffer.Ref()
+			}
+			return gst.PadProbeOK
+		})
 	}); err != nil {
 		return err
 	}

@@ -1,11 +1,10 @@
 package pipeline
 
 import (
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
-	"github.com/go-gst/go-glib/glib"
 )
 
 // GSTLogFunction is a custom logger than can be used

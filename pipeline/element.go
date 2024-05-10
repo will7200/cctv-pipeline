@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/go-gst/go-glib/glib"
@@ -68,7 +69,17 @@ func (e *Element) Build() error {
 }
 
 func (e *Element) Link(other *Element) error {
+	if e.el == nil || other.el == nil {
+		return errors.New("unable to link un-built elements")
+	}
 	return e.el.Link(other.el)
+}
+
+func (e *Element) LinkFiltered(other *Element, filter *gst.Caps) error {
+	if e.el == nil || other.el == nil {
+		return errors.New("unable to link un-built elements")
+	}
+	return e.el.LinkFiltered(other.el, filter)
 }
 
 func NewFileSrcElement(name string, file string) *Element {

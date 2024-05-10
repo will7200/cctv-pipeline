@@ -3,3 +3,4 @@
 segments
 .tools
 ./bin/cctver
+pipeline/tmp
