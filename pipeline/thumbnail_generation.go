@@ -51,7 +51,7 @@ type ThumbnailPipeline struct {
 	mutex  sync.RWMutex
 }
 
-// NewThumbnailPipeline create a new segmentation pipeline
+// NewThumbnailPipeline create a new thumbnail generation pipeline
 func NewThumbnailPipeline(params ThumbnailParams) (sg *ThumbnailPipeline, err error) {
 	sg = new(ThumbnailPipeline)
 	sg.params = params
@@ -137,10 +137,7 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 	th.Elements.customSink = app.SinkFromElement(th.Elements.sink.el)
 
 	index := 0
-	// Getting data out of the appsink is done by setting callbacks on it.
-	// The appsink will then call those handlers, as soon as data is available.
 	th.Elements.customSink.SetCallbacks(&app.SinkCallbacks{
-		// Add a "new-sample" callback
 		NewSampleFunc: func(sink *app.Sink) gst.FlowReturn {
 
 			// Pull the sample that triggered this callback
@@ -158,9 +155,6 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 			// At this point, buffer is only a reference to an existing memory region somewhere.
 			// When we want to access its content, we have to map it while requesting the required
 			// mode of access (read, read/write).
-			//
-			// We also know what format to expect because we set it with the caps. So we convert
-			// the map directly to signed 16-bit little-endian integers.
 			samples := buffer.Map(gst.MapRead).Bytes()
 			defer buffer.Unmap()
 			dir := filepath.Join(th.params.segmentBasePath, th.params.cameraId)
@@ -180,6 +174,8 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 	return nil
 }
 
+// CopySample will push a *gst.Sample to appsrc, pushing a sample
+// has the benefits that the *gst.Caps get set onto the appsrc
 func (th *ThumbnailPipeline) CopySample(sample *gst.Sample) {
 	ret := th.Elements.src.PushSample(sample.Copy())
 	if ret != gst.FlowOK {
@@ -187,8 +183,13 @@ func (th *ThumbnailPipeline) CopySample(sample *gst.Sample) {
 	}
 }
 
+// OnBuffer connects pushes a buffer onto the appsrc buffer to be processed
+// it is expected that the appsink's *gst.Caps get updated before calling this method
 func (th *ThumbnailPipeline) OnBuffer(buffer *gst.Buffer) {
-	th.Elements.src.PushBuffer(buffer)
+	ret := th.Elements.src.PushBuffer(buffer)
+	if ret != gst.FlowOK {
+		log.Err(errors.New("Flow return is not ok")).Msg(ret.String())
+	}
 }
 
 func (th *ThumbnailPipeline) Connect(source *Element) error {
