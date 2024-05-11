@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -197,10 +198,10 @@ func (th *ThumbnailPipeline) Connect(source *Element) error {
 	return nil
 }
 
-func (th *ThumbnailPipeline) Start(pipeline *Pipeline) error {
+func (th *ThumbnailPipeline) Start(ctx context.Context, pipeline *Pipeline) error {
 	return nil
 }
 
-func (th *ThumbnailPipeline) Stop(pipeline *Pipeline) error {
+func (th *ThumbnailPipeline) Stop(ctx context.Context, pipeline *Pipeline) error {
 	return nil
 }

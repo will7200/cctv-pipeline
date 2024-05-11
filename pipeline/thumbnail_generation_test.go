@@ -69,8 +69,8 @@ func runPipeline(ctx context.Context, pipeline *Pipeline) error {
 	// start loop
 	loop := glib.NewMainLoop(glib.MainContextDefault(), false)
 	go func() {
-		err = pipeline.Start(loop)
-		pipeline.Finish()
+		err = pipeline.Start(ctx, loop)
+		pipeline.Finish(ctx)
 		complete <- struct{}{}
 	}()
 

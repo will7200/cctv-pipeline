@@ -46,10 +46,10 @@ func TestSegmentPipelineFromFile(t *testing.T) {
 	// start loop
 	loop := glib.NewMainLoop(glib.MainContextDefault(), false)
 	go func() {
-		err = pipeline.Start(loop)
+		err = pipeline.Start(ctx, loop)
 		assert.Nil(t, err)
 		cancel()
-		pipeline.Finish()
+		pipeline.Finish(ctx)
 	}()
 
 	select {

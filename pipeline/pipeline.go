@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"context"
+
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog/log"
@@ -84,7 +86,7 @@ func (p *Pipeline) AddPartialPipeline(partial PartialPipeline) {
 }
 
 // Start the pipeline
-func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
+func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
 	var err error
 	err = p.Build()
 	if err != nil {
@@ -118,7 +120,7 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 		return true
 	})
 	for _, partial := range p.partials {
-		if err = partial.Start(p); err != nil {
+		if err = partial.Start(ctx, p); err != nil {
 			return err
 		}
 	}
@@ -136,9 +138,9 @@ func (p *Pipeline) Start(mainLoop *glib.MainLoop) error {
 	return mainLoop.RunError()
 }
 
-func (p *Pipeline) Finish() {
+func (p *Pipeline) Finish(ctx context.Context) {
 	for _, partial := range p.partials {
-		if err := partial.Stop(p); err != nil {
+		if err := partial.Stop(ctx, p); err != nil {
 			log.Err(err).Msg("unable to stop partial pipeline process")
 		}
 	}

@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,7 +208,9 @@ func (sg *SegmentationPipeline) Connect(source *Element) error {
 		}
 		// emit that we get a new source and update the
 		// target capabilities
-		sg.params.onNewSource(pad.GetCurrentCaps())
+		if sg.params.onNewSource != nil {
+			sg.params.onNewSource(pad.GetCurrentCaps())
+		}
 		// add a probe to get the latest available buffer
 		pad.AddProbe(gst.PadProbeTypeBuffer, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 			if sg.frameBuffer == nil {
@@ -222,7 +225,7 @@ func (sg *SegmentationPipeline) Connect(source *Element) error {
 	return nil
 }
 
-func (sg *SegmentationPipeline) Start(pipeline *Pipeline) error {
+func (sg *SegmentationPipeline) Start(ctx context.Context, pipeline *Pipeline) error {
 	ticker := time.NewTicker(sg.params.ensureSegmentDuration)
 	// multiple the duration by three to allow processing delay
 	wiggleRoom := sg.params.ensureSegmentDuration * 3
@@ -249,7 +252,7 @@ func (sg *SegmentationPipeline) Start(pipeline *Pipeline) error {
 	return nil
 }
 
-func (sg *SegmentationPipeline) Stop(pipeline *Pipeline) error {
+func (sg *SegmentationPipeline) Stop(ctx context.Context, pipeline *Pipeline) error {
 	close(sg.quit)
 	return nil
 }
