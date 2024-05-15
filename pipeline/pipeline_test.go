@@ -65,7 +65,7 @@ func runGSTPipeline(mainLoop *glib.MainLoop, pipeline *gst.Pipeline) error {
 		default:
 			// All messages implement a Stringer. However, this is
 			// typically an expensive thing to do and should be avoided.
-			logger.Print(msg.String())
+			//logger.Print(msg.String())
 
 		}
 		return true

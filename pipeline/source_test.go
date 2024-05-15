@@ -20,7 +20,7 @@ func setupFakeRTSP(ctx context.Context, listen string) *rtsp.ServerHandler {
 	})
 
 	go func() {
-		log.Print("Starting RTSP server at localhost:9000")
+		log.Printf("Starting RTSP server at %s", listen)
 		server.StartAndWait()
 	}()
 
@@ -75,7 +75,7 @@ func TestSourcePipeline(t *testing.T) {
 			source, err := NewSourcePipeline(SourcePipelineParams{RtspUri: test.location})
 			assert.Nil(t, err)
 
-			pipeline := NewPipeline("segment-pipeline")
+			pipeline := NewPipeline("source-pipeline")
 			pipeline.AddPartialPipeline(source)
 			assert.Nil(t, pipeline.Build())
 
@@ -138,7 +138,9 @@ func TestSourcePipeline(t *testing.T) {
 				err = pipeline.Start(ctx, loop)
 				assert.Nil(t, err)
 				cancel()
+				pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, test.encoding)
 				pipeline.Finish(ctx)
+				pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, test.encoding)
 			}()
 
 			select {

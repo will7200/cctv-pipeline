@@ -93,25 +93,25 @@ func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
 		return err
 	}
 	pipeline := p.pipeline
-
+	logger := log.With().Str("pipeline", p.name).Logger()
 	// Add a message handler to the pipeline bus, logging interesting information to the console.
 	pipeline.GetPipelineBus().AddWatch(func(msg *gst.Message) bool {
 		switch msg.Type() {
 		case gst.MessageEOS: // When end-of-stream is received stop the main loop
-			log.Print("End of Stream")
+			logger.Print("End of Stream")
 			pipeline.BlockSetState(gst.StateNull)
 			mainLoop.Quit()
 		case gst.MessageError: // Error messages are always fatal
 			err := msg.ParseError()
-			log.Err(err).Msg("error from gst")
+			logger.Err(err).Msg("error from gst")
 			if debug := err.DebugString(); debug != "" {
-				log.Debug().Msg(debug)
+				logger.Debug().Msg(debug)
 			}
 			mainLoop.Quit()
 		default:
 			// All messages implement a Stringer. However, this is
 			// typically an expensive thing to do and should be avoided.
-			//log.Println(msg.String())
+			logger.Println(msg.String())
 
 		}
 		for _, watch := range p.watches {
@@ -128,6 +128,7 @@ func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
 	if err != nil {
 		return err
 	}
+	logger.Print("Starting pipeline")
 	// Start the pipeline
 	err = pipeline.SetState(gst.StatePlaying)
 	if err != nil {

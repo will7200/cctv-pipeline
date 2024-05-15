@@ -3,13 +3,13 @@ package rtsp
 import (
 	"sync"
 
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 	"github.com/pion/rtp"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
-	"github.com/bluenviron/gortsplib/v4"
-	"github.com/bluenviron/gortsplib/v4/pkg/base"
 )
 
 type ServerHandler struct {
@@ -18,36 +18,35 @@ type ServerHandler struct {
 	stream    *gortsplib.ServerStream
 	publisher *gortsplib.ServerSession
 	params    ServerHandlerParams
+	logger    zerolog.Logger
 }
 
 func (sh *ServerHandler) OnRequest(conn *gortsplib.ServerConn, request *base.Request) {
-	log.Printf("Recieved request")
-	log.Print(request.String())
+	sh.logger.Debug().Str("request", request.String()).Msg("Recieved Request")
 }
 
 func (sh *ServerHandler) OnResponse(conn *gortsplib.ServerConn, response *base.Response) {
-	log.Printf("response request")
-	log.Print(response.String())
+	sh.logger.Debug().Str("response", response.String()).Msg("response request")
 }
 
-// called when a connection is opened.
+// OnConnOpen called when a connection is opened.
 func (sh *ServerHandler) OnConnOpen(ctx *gortsplib.ServerHandlerOnConnOpenCtx) {
-	log.Printf("conn opened")
+	sh.logger.Debug().Msg("conn opened")
 }
 
-// called when a connection is closed.
+// OnConnClose called when a connection is closed.
 func (sh *ServerHandler) OnConnClose(ctx *gortsplib.ServerHandlerOnConnCloseCtx) {
-	log.Printf("conn closed (%v)", ctx.Error)
+	sh.logger.Debug().Msgf("conn closed (%v)", ctx.Error)
 }
 
-// called when a session is opened.
+// OnSessionOpen called when a session is opened.
 func (sh *ServerHandler) OnSessionOpen(ctx *gortsplib.ServerHandlerOnSessionOpenCtx) {
-	log.Printf("session opened")
+	sh.logger.Debug().Msg("session opened")
 }
 
-// called when a session is closed.
+// OnSessionClose called when a session is closed.
 func (sh *ServerHandler) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
-	log.Printf("session closed")
+	sh.logger.Debug().Msg("session closed")
 
 	sh.mutex.Lock()
 	defer sh.mutex.Unlock()
@@ -60,10 +59,8 @@ func (sh *ServerHandler) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionClo
 	}
 }
 
-// called when receiving a DESCRIBE request.
+// OnDescribe called when receiving a DESCRIBE request.
 func (sh *ServerHandler) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	log.Printf("describe request")
-	log.Printf("%+v", ctx.Request)
 	sh.mutex.Lock()
 	defer sh.mutex.Unlock()
 
@@ -80,10 +77,8 @@ func (sh *ServerHandler) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (
 	}, sh.stream, nil
 }
 
-// called when receiving an ANNOUNCE request.
+// OnAnnounce called when receiving an ANNOUNCE request.
 func (sh *ServerHandler) OnAnnounce(ctx *gortsplib.ServerHandlerOnAnnounceCtx) (*base.Response, error) {
-	log.Printf("announce request")
-
 	sh.mutex.Lock()
 	defer sh.mutex.Unlock()
 
@@ -102,10 +97,8 @@ func (sh *ServerHandler) OnAnnounce(ctx *gortsplib.ServerHandlerOnAnnounceCtx) (
 	}, nil
 }
 
-// called when receiving a SETUP request.
+// OnSetup called when receiving a SETUP request.
 func (sh *ServerHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	log.Printf("setup request")
-
 	// no one is publishing yet
 	if sh.stream == nil {
 		return &base.Response{
@@ -118,19 +111,15 @@ func (sh *ServerHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.
 	}, sh.stream, nil
 }
 
-// called when receiving a PLAY request.
+// OnPlay called when receiving a PLAY request.
 func (sh *ServerHandler) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
-	log.Printf("play request")
-
 	return &base.Response{
 		StatusCode: base.StatusOK,
 	}, nil
 }
 
-// called when receiving a RECORD request.
+// OnRecord called when receiving a RECORD request.
 func (sh *ServerHandler) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Response, error) {
-	log.Printf("record request")
-
 	// called when receiving a RTP packet
 	ctx.Session.OnPacketRTPAny(func(medi *description.Media, forma format.Format, pkt *rtp.Packet) {
 		// route the RTP packet to all readers
@@ -161,6 +150,13 @@ func (sh *ServerHandler) HasStream() bool {
 	return sh.stream != nil
 }
 
+func (sh *ServerHandler) StreamDescription() *description.Session {
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
+
+	return sh.stream.Description()
+}
+
 type ServerHandlerParams struct {
 	// the RTSP address of the server, to accept connections and send and receive
 	// packets with the TCP transport.
@@ -170,6 +166,7 @@ type ServerHandlerParams struct {
 func NewServerHandler(params ServerHandlerParams) *ServerHandler {
 	h := &ServerHandler{
 		params: params,
+		logger: log.With().Str("rtsp", params.RTSPAddress).Logger(),
 	}
 	h.Server = &gortsplib.Server{
 		Handler:     h,
