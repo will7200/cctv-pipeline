@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog"
@@ -30,6 +32,15 @@ var (
 	help        = flagSet.BoolP("help", "h", false, "show this help message")
 	debug       = flagSet.BoolP("debug", "d", false, "debug logging")
 	gstDebug    = flagSet.Bool("gst-debug", false, "debug gst logging")
+)
+
+// cctv pipeline specific
+var (
+	sourceLocation                  = flagSet.StringP("source-location", "sl", "", "SourceLocation")
+	destinationLocation             = flagSet.StringP("destination-location", "t", "", "DestinationLocation")
+	cameraID                        = flagSet.StringP("camera-id", "c", "", "CameraID")
+	segmentBasePath                 = flagSet.StringP("segment-base-path", "b", "", "SegmentBasePath")
+	targetVideoSegmentationDuration = flagSet.DurationP("segmentation-duration", "sd", time.Second*10, "TargetVideoSegmentationDuration")
 )
 
 // flagNameFromEnvironmentName gets the variable from the environment
@@ -87,4 +98,30 @@ func main() {
 		gst.SetLogFunction(pipeline.GSTLogFunction)
 	}
 
+	cctvPipeline, err := pipeline.NewCCTVPipeline(pipeline.CCTVPipelineParams{
+		SourceLocation:                  *sourceLocation,
+		DestinationLocation:             *destinationLocation,
+		CameraID:                        *cameraID,
+		SegmentBasePath:                 *segmentBasePath,
+		TargetVideoSegmentationDuration: *targetVideoSegmentationDuration,
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create pipeline")
+	}
+
+	ctx := context.Background()
+	err = cctvPipeline.Start(ctx)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to start pipeline")
+	}
+
+	err = cctvPipeline.Run()
+	if err != nil {
+		log.Err(err).Msg("Something bad happened while running the pipeline")
+		if err := cctvPipeline.Stop(); err != nil {
+			log.Err(err).Msg("More errros")
+		}
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

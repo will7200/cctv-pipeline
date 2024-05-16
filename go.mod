@@ -12,6 +12,7 @@ require (
 	github.com/rs/zerolog v1.32.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
+	go.uber.org/multierr v1.11.0
 	gopkg.in/vansante/go-ffprobe.v2 v2.1.1
 )
 
