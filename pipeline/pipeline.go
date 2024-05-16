@@ -32,6 +32,8 @@ type Pipeline struct {
 
 	// have we called built
 	built bool
+	// loop
+	loop *glib.MainLoop
 }
 
 // Build the pipeline, once built it will never be built again
@@ -92,6 +94,7 @@ func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
 	if err != nil {
 		return err
 	}
+	p.loop = mainLoop
 	pipeline := p.pipeline
 	logger := log.With().Str("pipeline", p.name).Logger()
 	// Add a message handler to the pipeline bus, logging interesting information to the console.
@@ -145,6 +148,14 @@ func (p *Pipeline) Finish(ctx context.Context) {
 			log.Err(err).Msg("unable to stop partial pipeline process")
 		}
 	}
+}
+
+// Quit the current pipeline
+func (p *Pipeline) Quit() {
+	if p.loop == nil {
+		return
+	}
+	p.loop.Quit()
 }
 
 // NewPipeline returns a new pipeline given a name

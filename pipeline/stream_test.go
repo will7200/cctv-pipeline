@@ -8,13 +8,12 @@ import (
 	"time"
 
 	description2 "github.com/bluenviron/gortsplib/v4/pkg/description"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStreamPipeline(t *testing.T) {
+func TestStreamPipeline(tt *testing.T) {
 	tests := []struct {
 		encoding     string
 		location     string
@@ -23,7 +22,7 @@ func TestStreamPipeline(t *testing.T) {
 		{`x264enc`, `rtsp://localhost:9002/stream`, `rtsp://localhost:9003/stream`}}
 
 	for _, test := range tests {
-		t.Run(test.encoding, func(t *testing.T) {
+		tt.Run(test.encoding, func(t *testing.T) {
 
 			sinkListen, err := url.Parse(test.sinkLocation)
 			assert.Nil(t, err)
@@ -105,9 +104,11 @@ func TestStreamPipeline(t *testing.T) {
 			loop.Quit()
 			pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, test.encoding)
 			assert.Equal(t, true, hasStream, "Target sink never received a stream")
+			if !hasStream {
+				assert.FailNow(t, "no stream was provided")
+			}
 			assert.NotNil(t, desp)
 			assert.Equal(t, desp.Medias[0].Formats[0].Codec(), "MPEG-TS")
-			spew.Dump(desp)
 		})
 	}
 }

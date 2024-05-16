@@ -68,7 +68,6 @@ func (s *SourcePipeline) Prepare(pipeline *Pipeline) error {
 }
 
 func (s *SourcePipeline) Build(pipeline *Pipeline) error {
-	//TODO implement me
 	if _, err := s.Elements.rtspsrc.el.Connect("pad-added", func(src *gst.Element, pad *gst.Pad) {
 		log.Printf("Pad '%s' has caps %s", pad.GetName(), pad.GetCurrentCaps().String())
 		if pad.IsLinked() {
@@ -81,30 +80,39 @@ func (s *SourcePipeline) Build(pipeline *Pipeline) error {
 			log.Print("can't get encoding")
 			return
 		}
+		var desiredCaps *gst.Caps
 		switch encodingName {
 		case "H264":
 			s.Elements.depay.Factory = "rtph264depay"
+			desiredCaps = gst.NewCapsFromString("video/x-h264, stream-format=byte-stream, alignment=au")
 		case "H265":
 			s.Elements.depay.Factory = "rtph265depay"
+			desiredCaps = gst.NewCapsFromString("video/x-h265, stream-format=byte-stream, alignment=au")
 		default:
 			log.Printf("Unsupported encoding: %s", encodingName)
 		}
-		err = s.Elements.depay.Build()
-		if err != nil {
-			log.Err(err).Msg("can't build depay")
-			return
+		elements := []*Element{
+			s.Elements.depay,
 		}
-		err = pipeline.pipeline.Add(s.Elements.depay.el)
-		if err != nil {
-			log.Err(err).Msg("can't add depay")
-			return
+		for _, elem := range elements {
+			if err := elem.Build(); err != nil {
+				log.Err(err).Msg("can't build")
+				return
+			}
+			if err := pipeline.pipeline.Add(elem.el); err != nil {
+				log.Err(err).Msg("can't add element")
+				return
+			}
+		}
+		if desiredCaps == nil {
+			log.Panic().Msg("desired caps is nil")
 		}
 		err = src.Link(s.Elements.depay.el)
 		if err != nil {
 			log.Err(err).Msg("can't link depay")
 			return
 		}
-		err = s.Elements.depay.Link(s.Elements.tee)
+		err = s.Elements.depay.LinkFiltered(s.Elements.tee, desiredCaps)
 		if err != nil {
 			log.Err(err).Msg("can't link tee")
 			return

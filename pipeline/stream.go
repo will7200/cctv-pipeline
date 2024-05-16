@@ -98,18 +98,31 @@ func (s *StreamPipeline) Prepare(pipeline *Pipeline) error {
 }
 
 func (s *StreamPipeline) HandleStreamChange(newState StreamPipelineState) (err error) {
+	if s.state.encodingName != "" {
+		// TODO: handle stream changes
+		return errors.New("stream change detected, unimplemented")
+	}
 	switch newState.encodingName {
-	case "video/x-264":
+	case "video/x-h264":
+		elements := []*Element{}
+		for _, elem := range elements {
+			if err := elem.Build(); err != nil {
+				return err
+			}
+			if err := s.Elements.bin.Add(elem.el); err != nil {
+				return err
+			}
+		}
 		// link straight to converter
 		links := []LinkWithCaps{
-			{s.Elements.queue, s.Elements.converter, nil},
+			{s.Elements.queue, s.Elements.mux, nil},
 		}
 		for _, link := range links {
 			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
 				return err
 			}
 		}
-		s.Elements.converter.el.SyncStateWithParent()
+		s.Elements.mux.el.SyncStateWithParent()
 	case "video/x-h265":
 		if s.Elements.decoder != nil {
 			// TODO: remove links
@@ -122,17 +135,24 @@ func (s *StreamPipeline) HandleStreamChange(newState StreamPipelineState) (err e
 			Factory: "avdec_h265",
 			Name:    "decoder",
 		}
-		err = s.Elements.decoder.Build()
-		if err != nil {
-			return err
+		elements := []*Element{
+			s.Elements.decoder,
+			s.Elements.encoder,
+			s.Elements.converter,
 		}
-		err = s.Elements.bin.Add(s.Elements.decoder.el)
-		if err != nil {
-			return err
+		for _, elem := range elements {
+			if err := elem.Build(); err != nil {
+				return err
+			}
+			if err := s.Elements.bin.Add(elem.el); err != nil {
+				return err
+			}
 		}
 		links := []LinkWithCaps{
 			{s.Elements.queue, s.Elements.decoder, nil},
 			{s.Elements.decoder, s.Elements.converter, nil},
+			{s.Elements.converter, s.Elements.encoder, nil},
+			{s.Elements.encoder, s.Elements.mux, nil},
 		}
 		for _, link := range links {
 			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
@@ -152,8 +172,6 @@ func (s *StreamPipeline) Build(pipeline *Pipeline) error {
 	elements := []*Element{
 		s.Elements.queue,
 		s.Elements.sink,
-		s.Elements.converter,
-		s.Elements.encoder,
 		s.Elements.mux,
 	}
 
@@ -185,6 +203,7 @@ func (s *StreamPipeline) Build(pipeline *Pipeline) error {
 		err = s.HandleStreamChange(StreamPipelineState{encodingName: encodingName})
 		if err != nil {
 			log.Err(err).Msg("Unable to handle stream change")
+			pipeline.Quit()
 		}
 		err = pipeline.pipeline.SetState(gst.StatePlaying)
 		if err != nil {
@@ -195,8 +214,6 @@ func (s *StreamPipeline) Build(pipeline *Pipeline) error {
 		return err
 	}
 	links := []LinkWithCaps{
-		{s.Elements.converter, s.Elements.encoder, nil},
-		{s.Elements.encoder, s.Elements.mux, nil},
 		{s.Elements.mux, s.Elements.sink, nil},
 	}
 	for _, link := range links {

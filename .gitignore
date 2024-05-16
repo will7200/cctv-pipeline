@@ -4,3 +4,4 @@ segments
 .tools
 ./bin/cctver
 pipeline/tmp
+pipeline/state
