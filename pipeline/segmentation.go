@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,17 +10,25 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-gst/go-glib/glib"
 	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog/log"
 )
 
 var _ PartialPipeline = (*SegmentationPipeline)(nil)
 
+type SegmentationPipelineState struct {
+	encodingName string
+}
+
 type SegmentationPipelineElements struct {
 	converter *Element
-	x265enc   *Element
+	encoder   *Element
 	parser    *Element
 	sink      *Element
+	queue     *Element
+	bin       *gst.Bin
+	decoder   *Element
 }
 
 type SegmentPipelineParams struct {
@@ -37,6 +46,8 @@ type SegmentPipelineParams struct {
 	onNewBuffer func(buffer *gst.Buffer)
 	// callback for new source
 	onNewSource func(caps *gst.Caps)
+	// callback for when new segment is created
+	onNewFileSegmentCreate func(file string)
 }
 
 // SegmentationPipeline will split a given stream into smaller parts
@@ -51,10 +62,10 @@ type SegmentationPipeline struct {
 	params SegmentPipelineParams
 	// source element
 	source *Element
+	// state
+	state *SegmentationPipelineState
 	// lastFinishedSegment is the time of the last finished segment
 	lastFinishedSegment time.Time
-	// holds the first frame available for the current segment
-	frameBuffer *gst.Buffer
 	// quit holds a chan to send to stop checking this part of the pipeline
 	quit  chan struct{}
 	mutex sync.RWMutex
@@ -67,14 +78,26 @@ func NewSegmentationPipeline(params SegmentPipelineParams) (sg *SegmentationPipe
 	sg.params = params
 	sg.lastFinishedSegment = time.Now()
 	sg.mutex = sync.RWMutex{}
+	sg.state = new(SegmentationPipelineState)
+
+	sg.Elements = SegmentationPipelineElements{
+		queue: &Element{
+			Factory: "queue",
+			Name:    "segmentation-input-queue",
+			Properties: map[string]interface{}{
+				"max-size-bytes": uint(1024 * 1024 * 10),
+			},
+		},
+		decoder: nil,
+	}
 
 	sg.Elements.converter = &Element{
 		Factory: "videoconvert",
 		Name:    "converter",
 	}
 
-	sg.Elements.x265enc = &Element{
-		Factory: "x265enc",
+	sg.Elements.encoder = &Element{
+		Factory: "encoder",
 		Name:    "enc",
 		Properties: map[string]interface{}{
 			"speed-preset": 1,
@@ -105,13 +128,6 @@ func NewSegmentationPipeline(params SegmentPipelineParams) (sg *SegmentationPipe
 
 func (sg *SegmentationPipeline) Prepare(pipeline *Pipeline) error {
 	pipeline.AddWatch(sg.HandleNewSegment)
-	spElements := []*Element{
-		sg.Elements.converter,
-		sg.Elements.parser,
-		sg.Elements.sink,
-		sg.Elements.x265enc,
-	}
-	pipeline.AddElements(spElements...)
 	return nil
 }
 
@@ -135,12 +151,10 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 			log.Printf("New file created %s with current run-time of %v", val, gRunTime)
 			sg.mutex.Lock()
 			sg.lastFinishedSegment = time.Now()
-			if sg.frameBuffer != nil && sg.params.onNewBuffer != nil {
-				sg.params.onNewBuffer(sg.frameBuffer)
-				sg.frameBuffer.Unref()
-				sg.frameBuffer = nil
-			}
 			sg.mutex.Unlock()
+			if sg.params.onNewFileSegmentCreate != nil {
+				sg.params.onNewFileSegmentCreate(val.(string))
+			}
 		}
 	}
 	return true
@@ -167,16 +181,101 @@ func (sg *SegmentationPipeline) HandleFormatLocation(g *gst.Element, val uint, s
 	return name
 }
 
+func (sg *SegmentationPipeline) HandleStreamChange(newState SegmentationPipelineState) (err error) {
+	if sg.state.encodingName != "" {
+		// TODO: handle stream changes
+		return errors.New("stream change detected, unimplemented")
+	}
+	switch newState.encodingName {
+	case "video/x-raw":
+		pad := sg.Elements.queue.el.GetStaticPad("src")
+		// emit that we get a new source and update the
+		// target capabilities
+		if sg.params.onNewSource != nil {
+			sg.params.onNewSource(pad.GetCurrentCaps())
+		}
+		sg.Elements.encoder.Factory = "x265enc"
+		elements := []*Element{
+			sg.Elements.encoder,
+			sg.Elements.converter,
+			sg.Elements.parser,
+		}
+		for _, elem := range elements {
+			if err := elem.Build(); err != nil {
+				return err
+			}
+			if err := sg.Elements.bin.Add(elem.el); err != nil {
+				return err
+			}
+		}
+		links := []LinkWithCaps{
+			{sg.Elements.queue, sg.Elements.converter, nil},
+			{sg.Elements.converter, sg.Elements.encoder, nil},
+			{sg.Elements.encoder, sg.Elements.parser, nil},
+			{sg.Elements.parser, sg.Elements.sink, nil},
+		}
+		for _, link := range links {
+			link.left.el.SyncStateWithParent()
+			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
+				return err
+			}
+		}
+	//case "video/x-h264":
+	//	return errors.New("supp")
+	case "video/x-h265":
+		sg.Elements.decoder = &Element{
+			Factory: "avdec_h265",
+			Name:    "decoder",
+		}
+		elements := []*Element{
+			sg.Elements.decoder,
+			sg.Elements.encoder,
+			sg.Elements.converter,
+			sg.Elements.parser,
+		}
+		for _, elem := range elements {
+			if err := elem.Build(); err != nil {
+				return err
+			}
+			if err := sg.Elements.bin.Add(elem.el); err != nil {
+				return err
+			}
+		}
+		links := []LinkWithCaps{
+			{sg.Elements.queue, sg.Elements.decoder, nil},
+			{sg.Elements.decoder, sg.Elements.converter, nil},
+			{sg.Elements.converter, sg.Elements.encoder, nil},
+			{sg.Elements.encoder, sg.Elements.parser, nil},
+		}
+		for _, link := range links {
+			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
+				return err
+			}
+		}
+		sg.Elements.decoder.el.SyncStateWithParent()
+	default:
+		return errors.New(fmt.Sprintf("Encoding not supported %s", newState.encodingName))
+	}
+	sg.state = &newState
+	return nil
+}
+
 func (sg *SegmentationPipeline) Build(pipeline *Pipeline) error {
 	var err error
-
-	links := []Link{
-		{sg.Elements.converter, sg.Elements.x265enc},
-		{sg.Elements.x265enc, sg.Elements.parser},
-		{sg.Elements.parser, sg.Elements.sink},
+	sg.Elements.bin = gst.NewBin("segmentation-bin")
+	elements := []*Element{
+		sg.Elements.queue,
+		sg.Elements.sink,
 	}
-	for _, link := range links {
-		if err := link.left.Link(link.right); err != nil {
+
+	if err = pipeline.pipeline.Add(sg.Elements.bin.Element); err != nil {
+		return err
+	}
+	for _, elem := range elements {
+		if err = elem.Build(); err != nil {
+			return err
+		}
+		if err := sg.Elements.bin.Add(elem.el); err != nil {
 			return err
 		}
 	}
@@ -186,12 +285,58 @@ func (sg *SegmentationPipeline) Build(pipeline *Pipeline) error {
 		return err
 	}
 
+	pad := sg.Elements.queue.el.GetStaticPad("src")
+	_, err = pad.Connect("notify::caps", func(pad *gst.Pad, parameter *glib.ParamSpec) {
+		sg.mutex.Lock()
+		defer sg.mutex.Unlock()
+		caps := pad.GetCurrentCaps()
+		var encodingName string
+		if caps == nil {
+			encodingName = ""
+		} else {
+			encodingName = caps.GetStructureAt(0).Name()
+		}
+		if encodingName == sg.state.encodingName {
+			return
+		}
+		log.Info().Str("old", sg.state.encodingName).Str("new", encodingName).Msg("Detected stream change")
+		if pipeline.pipeline.GetCurrentState() == gst.StatePaused && encodingName == "" {
+			// a stream finished for some reason
+			return
+		}
+		err := pipeline.pipeline.SetState(gst.StatePaused)
+		if err != nil {
+			log.Err(err).Msg("Unable to pause pipeline")
+		}
+		err = sg.HandleStreamChange(SegmentationPipelineState{encodingName: encodingName})
+		if err != nil {
+			log.Err(err).Msg("Unable to handle stream change")
+			pipeline.Quit()
+		}
+		err = pipeline.pipeline.SetState(gst.StatePlaying)
+		if err != nil {
+			log.Err(err).Msg("Unable to start pipeline")
+		}
+	})
+
 	return nil
 }
 
 func (sg *SegmentationPipeline) Connect(source *Element) error {
 	sg.source = source
-	if _, err := sg.source.el.Connect("pad-added", func(src *gst.Element, pad *gst.Pad) {
+	pads, err := source.el.GetSrcPads()
+	if err != nil {
+		return err
+	}
+	if len(pads) == 1 {
+		err := source.Link(sg.Elements.queue)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	_, err = sg.source.el.Connect("pad-added", func(src *gst.Element, pad *gst.Pad) {
 		log.Printf("Pad '%s' has caps %s", pad.GetName(), pad.GetCurrentCaps().String())
 		if pad.IsLinked() {
 			log.Printf("Pad '%s' is already linked", pad.GetName())
@@ -201,27 +346,11 @@ func (sg *SegmentationPipeline) Connect(source *Element) error {
 		if !strings.Contains(mediaType, "video/") {
 			return
 		}
-		err := src.Link(sg.Elements.converter.el)
+		err := source.Link(sg.Elements.queue)
 		if err != nil {
-			log.Err(err).Msg("unable to link")
-			return
+			log.Err(err).Msg("unable to link element to src")
 		}
-		// emit that we get a new source and update the
-		// target capabilities
-		if sg.params.onNewSource != nil {
-			sg.params.onNewSource(pad.GetCurrentCaps())
-		}
-		// add a probe to get the latest available buffer
-		pad.AddProbe(gst.PadProbeTypeBuffer, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-			if sg.frameBuffer == nil {
-				sg.frameBuffer = info.GetBuffer()
-				sg.frameBuffer.Ref()
-			}
-			return gst.PadProbeOK
-		})
-	}); err != nil {
-		return err
-	}
+	})
 	return nil
 }
 
