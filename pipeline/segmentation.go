@@ -42,8 +42,6 @@ type SegmentPipelineParams struct {
 	ensureSegmentDuration time.Duration
 	// callback for when a new sample is available
 	onNewSample func(sample *gst.Sample)
-	// callback for new buffer
-	onNewBuffer func(buffer *gst.Buffer)
 	// callback for new source
 	onNewSource func(caps *gst.Caps)
 	// callback for when new segment is created
@@ -142,6 +140,9 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 		if val, err := structure.GetValue("location"); err == nil {
 			if sg.fileSegmentTracker == false {
 				sg.fileSegmentTracker = true
+				if sg.params.onNewFileSegmentCreate != nil {
+					sg.params.onNewFileSegmentCreate(val.(string))
+				}
 				return true
 			} else {
 				sg.fileSegmentTracker = false
@@ -152,9 +153,6 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 			sg.mutex.Lock()
 			sg.lastFinishedSegment = time.Now()
 			sg.mutex.Unlock()
-			if sg.params.onNewFileSegmentCreate != nil {
-				sg.params.onNewFileSegmentCreate(val.(string))
-			}
 		}
 	}
 	return true

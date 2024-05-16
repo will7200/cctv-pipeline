@@ -33,7 +33,9 @@ func TestThumbnailPipelineFromFile(t *testing.T) {
 		onNewSource: func(caps *gst.Caps) {
 			tpipeline.Elements.src.SetCaps(caps)
 		},
-		onNewBuffer: tpipeline.OnBuffer,
+		onNewFileSegmentCreate: func(file string) {
+			tpipeline.flush()
+		},
 	})
 	assert.Nil(t, err)
 
@@ -44,12 +46,14 @@ func TestThumbnailPipelineFromFile(t *testing.T) {
 	assert.Nil(t, pipeline.Build())
 	assert.Nil(t, source.Link(decoded))
 	assert.Nil(t, spipline.Connect(decoded))
-
+	pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, "thumbNail")
 	thumbnail := NewPipeline("thumbnail-pipeline")
 	thumbnail.AddPartialPipeline(tpipeline)
 	assert.Nil(t, thumbnail.Build())
+	assert.Nil(t, tpipeline.Connect(spipline.Elements.queue))
+
 	// setup context
-	waitFor := time.Second * 30
+	waitFor := time.Second * 12
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, waitFor)
 	time.AfterFunc(waitFor, cancel)
@@ -59,6 +63,8 @@ func TestThumbnailPipelineFromFile(t *testing.T) {
 	}()
 	assert.Nil(t, runPipeline(ctx, pipeline))
 	cancel()
+	pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, "thumbNail")
+	assert.GreaterOrEqual(t, tpipeline.state.createCount, uint(8))
 }
 
 func runPipeline(ctx context.Context, pipeline *Pipeline) error {

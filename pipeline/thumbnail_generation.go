@@ -15,6 +15,13 @@ import (
 
 var _ PartialPipeline = (*ThumbnailPipeline)(nil)
 
+type ThumbnailPipelineState struct {
+	createCount uint
+	// holds the first frame available for the current segment
+	frameBuffer  *gst.Buffer
+	currentProbe uint64
+}
+
 type ThumbnailPipelineElements struct {
 	appsrc     *Element
 	webpenc    *Element
@@ -49,12 +56,15 @@ type ThumbnailPipeline struct {
 	params ThumbnailParams
 	// source element
 	source *Element
-	mutex  sync.RWMutex
+	// state
+	state *ThumbnailPipelineState
+	mutex sync.RWMutex
 }
 
 // NewThumbnailPipeline create a new thumbnail generation pipeline
 func NewThumbnailPipeline(params ThumbnailParams) (sg *ThumbnailPipeline, err error) {
 	sg = new(ThumbnailPipeline)
+	sg.state = new(ThumbnailPipelineState)
 	sg.params = params
 	sg.mutex = sync.RWMutex{}
 
@@ -137,7 +147,6 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 
 	th.Elements.customSink = app.SinkFromElement(th.Elements.sink.el)
 
-	index := 0
 	th.Elements.customSink.SetCallbacks(&app.SinkCallbacks{
 		NewSampleFunc: func(sink *app.Sink) gst.FlowReturn {
 
@@ -163,11 +172,21 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 			if err != nil {
 				log.Err(err).Msg("unable to create directory")
 			}
-			err = os.WriteFile(fmt.Sprintf(filepath.Join(th.params.segmentBasePath, th.params.cameraId, "%d_thumb.webp"), index), samples, 0744)
+			// Update create count
+			th.mutex.Lock()
+			th.state.createCount++
+			th.mutex.Unlock()
+
+			file := fmt.Sprintf(filepath.Join(th.params.segmentBasePath, th.params.cameraId, "%d_thumb.webp"), th.state.createCount)
+			err = os.WriteFile(file, samples, 0744)
 			if err != nil {
+				th.mutex.Lock()
+				th.state.createCount--
+				th.mutex.Unlock()
 				log.Err(err).Msg("Unable to write to file")
+				return gst.FlowOK
 			}
-			index++
+			log.Info().Str("file", file).Msg("Created new thumbnail")
 			return gst.FlowOK
 		},
 	})
@@ -194,7 +213,20 @@ func (th *ThumbnailPipeline) OnBuffer(buffer *gst.Buffer) {
 }
 
 func (th *ThumbnailPipeline) Connect(source *Element) error {
+	th.mutex.Lock()
+	defer th.mutex.Unlock()
 	th.source = source
+	pad := th.source.el.GetStaticPad("src")
+	th.state.currentProbe = pad.AddProbe(gst.PadProbeTypeBuffer, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		th.mutex.Lock()
+		defer th.mutex.Unlock()
+
+		if th.state.frameBuffer == nil {
+			th.state.frameBuffer = info.GetBuffer()
+			th.state.frameBuffer.Ref()
+		}
+		return gst.PadProbeOK
+	})
 	return nil
 }
 
@@ -204,4 +236,19 @@ func (th *ThumbnailPipeline) Start(ctx context.Context, pipeline *Pipeline) erro
 
 func (th *ThumbnailPipeline) Stop(ctx context.Context, pipeline *Pipeline) error {
 	return nil
+}
+
+func (th *ThumbnailPipeline) flush() {
+	th.mutex.Lock()
+	defer th.mutex.Unlock()
+	if th.state.frameBuffer == nil {
+		log.Error().Msg("No buffer")
+		return
+	}
+	ret := th.Elements.src.PushBuffer(th.state.frameBuffer)
+	if ret != gst.FlowOK {
+		log.Err(errors.New("Flow return is not ok")).Msg(ret.String())
+	}
+	th.state.frameBuffer.Unref()
+	th.state.frameBuffer = nil
 }

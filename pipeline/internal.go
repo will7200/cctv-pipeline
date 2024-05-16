@@ -83,7 +83,6 @@ func NewCCTVPipeline(params CCTVPipelineParams) (_ *CCTVPipeline, err error) {
 		onNewSource: func(caps *gst.Caps) {
 			cctv.thumbNail.Elements.src.SetCaps(caps)
 		},
-		onNewBuffer: cctv.thumbNail.OnBuffer,
 	})
 
 	pipeline := NewPipeline("cctv-pipeline")
