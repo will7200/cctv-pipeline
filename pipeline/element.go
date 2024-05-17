@@ -82,6 +82,14 @@ func (e *Element) LinkFiltered(other *Element, filter *gst.Caps) error {
 	return e.el.LinkFiltered(other.el, filter)
 }
 
+func (e *Element) Unlink(other *Element) error {
+	if e.el == nil || other.el == nil {
+		return errors.New("unable to link un-built elements")
+	}
+	e.el.Unlink(other.el)
+	return nil
+}
+
 func NewFileSrcElement(name string, file string) *Element {
 	return &Element{
 		Factory: "filesrc",

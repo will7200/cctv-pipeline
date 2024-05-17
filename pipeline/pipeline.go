@@ -153,7 +153,7 @@ func (p *Pipeline) Finish(ctx context.Context) {
 // Quit the current pipeline
 func (p *Pipeline) Quit() {
 	if p.loop == nil {
-		return
+		panic("Unable to quit")
 	}
 	p.loop.Quit()
 }

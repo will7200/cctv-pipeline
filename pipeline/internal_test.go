@@ -75,6 +75,7 @@ func TestCCTVPipeline(tt *testing.T) {
 						if server2.HasStream() {
 							hasStream = true
 							desp = server2.StreamDescription()
+							time.Sleep(8 * time.Second)
 							cancel()
 							break outer
 						}
@@ -86,7 +87,7 @@ func TestCCTVPipeline(tt *testing.T) {
 			case <-ctx.Done():
 				break
 			}
-			time.Sleep(1 * time.Second)
+			DebugGSTState(ctx, cctvPipeline.basePipeline, fmt.Sprintf("%s.%s", "base", test.encoding))
 			err = cctvPipeline.Stop()
 			assert.Nil(t, err)
 

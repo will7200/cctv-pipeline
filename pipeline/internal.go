@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
-	"github.com/go-gst/go-gst/gst"
+	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 )
 
@@ -74,14 +74,20 @@ func NewCCTVPipeline(params CCTVPipelineParams) (_ *CCTVPipeline, err error) {
 	if err = thumbnail.Build(); err != nil {
 		return
 	}
-
 	cctv.segmentation, err = NewSegmentationPipeline(SegmentPipelineParams{
 		videoDuration:         params.TargetVideoSegmentationDuration,
 		cameraId:              params.CameraID,
 		segmentBasePath:       params.SegmentBasePath,
 		ensureSegmentDuration: params.TargetVideoSegmentationDuration,
-		onNewSource: func(caps *gst.Caps) {
-			cctv.thumbNail.Elements.src.SetCaps(caps)
+		onNewSource: func(src *Element) {
+			log.Info().Str("source", src.el.GetName()).Msg("Attempting to connect to thumbnail-pipeline")
+			err := cctv.thumbNail.Connect(src)
+			if err != nil {
+				log.Err(err).Msg("Unable to connect src element for thumbnail-pipeline")
+			}
+		},
+		onNewFileSegmentCreate: func(file string) {
+			cctv.thumbNail.flush()
 		},
 	})
 

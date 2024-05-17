@@ -191,6 +191,9 @@ func (s *StreamPipeline) Build(pipeline *Pipeline) error {
 		s.mutex.Lock()
 		defer s.mutex.Unlock()
 		caps := pad.GetCurrentCaps()
+		if caps == nil {
+			return
+		}
 		encodingName := caps.GetStructureAt(0).Name()
 		if encodingName == s.state.encodingName {
 			return

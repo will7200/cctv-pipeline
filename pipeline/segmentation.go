@@ -43,7 +43,7 @@ type SegmentPipelineParams struct {
 	// callback for when a new sample is available
 	onNewSample func(sample *gst.Sample)
 	// callback for new source
-	onNewSource func(caps *gst.Caps)
+	onNewSource func(src *Element)
 	// callback for when new segment is created
 	onNewFileSegmentCreate func(file string)
 }
@@ -149,7 +149,7 @@ func (sg *SegmentationPipeline) HandleNewSegment(msg *gst.Message) bool {
 			}
 			runTime, _ := structure.GetValue("running-time")
 			gRunTime := runTime.(uint64)
-			log.Printf("New file created %s with current run-time of %v", val, gRunTime)
+			log.Info().Msgf("New file created %s with current run-time of %v", val, gRunTime)
 			sg.mutex.Lock()
 			sg.lastFinishedSegment = time.Now()
 			sg.mutex.Unlock()
@@ -186,11 +186,9 @@ func (sg *SegmentationPipeline) HandleStreamChange(newState SegmentationPipeline
 	}
 	switch newState.encodingName {
 	case "video/x-raw":
-		pad := sg.Elements.queue.el.GetStaticPad("src")
-		// emit that we get a new source and update the
-		// target capabilities
+		// emit that we get a new source
 		if sg.params.onNewSource != nil {
-			sg.params.onNewSource(pad.GetCurrentCaps())
+			sg.params.onNewSource(sg.Elements.queue)
 		}
 		sg.Elements.encoder.Factory = "x265enc"
 		elements := []*Element{
@@ -218,8 +216,48 @@ func (sg *SegmentationPipeline) HandleStreamChange(newState SegmentationPipeline
 				return err
 			}
 		}
-	//case "video/x-h264":
-	//	return errors.New("supp")
+	case "video/x-h264":
+		sg.Elements.decoder = &Element{
+			Factory: "avdec_h264",
+			Name:    "decoder",
+		}
+		sg.Elements.encoder.Factory = "x265enc"
+		elements := []*Element{
+			sg.Elements.decoder,
+			sg.Elements.encoder,
+			sg.Elements.converter,
+			sg.Elements.parser,
+		}
+		for _, elem := range elements {
+			if err := elem.Build(); err != nil {
+				return err
+			}
+			if err := sg.Elements.bin.Add(elem.el); err != nil {
+				return err
+			}
+		}
+		links := []LinkWithCaps{
+			{sg.Elements.queue, sg.Elements.decoder, nil},
+			{sg.Elements.decoder, sg.Elements.converter, nil},
+			{sg.Elements.converter, sg.Elements.encoder, nil},
+			{sg.Elements.encoder, sg.Elements.parser, nil},
+			{sg.Elements.parser, sg.Elements.sink, nil},
+		}
+		for _, link := range links {
+			link.left.el.SyncStateWithParent()
+			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
+				return err
+			}
+		}
+		sg.Elements.decoder.el.SyncStateWithParent()
+		// emit that we get a new source
+		if sg.params.onNewSource != nil {
+			sg.params.onNewSource(sg.Elements.decoder)
+			pad := sg.Elements.decoder.el.GetStaticPad("src")
+			_, _ = pad.Connect("notify::caps", func(pad *gst.Pad, parameter *glib.ParamSpec) {
+				sg.params.onNewSource(sg.Elements.decoder)
+			})
+		}
 	case "video/x-h265":
 		sg.Elements.decoder = &Element{
 			Factory: "avdec_h265",
@@ -323,6 +361,13 @@ func (sg *SegmentationPipeline) Build(pipeline *Pipeline) error {
 func (sg *SegmentationPipeline) Connect(source *Element) error {
 	sg.source = source
 	pads, err := source.el.GetSrcPads()
+	if source.Factory == "tee" {
+		err := source.Link(sg.Elements.queue)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -335,7 +380,6 @@ func (sg *SegmentationPipeline) Connect(source *Element) error {
 	}
 
 	_, err = sg.source.el.Connect("pad-added", func(src *gst.Element, pad *gst.Pad) {
-		log.Printf("Pad '%s' has caps %s", pad.GetName(), pad.GetCurrentCaps().String())
 		if pad.IsLinked() {
 			log.Printf("Pad '%s' is already linked", pad.GetName())
 			return

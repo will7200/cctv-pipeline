@@ -30,8 +30,8 @@ func TestThumbnailPipelineFromFile(t *testing.T) {
 		cameraId:              TestCameraID,
 		segmentBasePath:       segmentBase,
 		ensureSegmentDuration: time.Second,
-		onNewSource: func(caps *gst.Caps) {
-			tpipeline.Elements.src.SetCaps(caps)
+		onNewSource: func(element *Element) {
+			assert.Nil(t, tpipeline.Connect(element))
 		},
 		onNewFileSegmentCreate: func(file string) {
 			tpipeline.flush()
@@ -50,7 +50,6 @@ func TestThumbnailPipelineFromFile(t *testing.T) {
 	thumbnail := NewPipeline("thumbnail-pipeline")
 	thumbnail.AddPartialPipeline(tpipeline)
 	assert.Nil(t, thumbnail.Build())
-	assert.Nil(t, tpipeline.Connect(spipline.Elements.queue))
 
 	// setup context
 	waitFor := time.Second * 12
@@ -63,7 +62,7 @@ func TestThumbnailPipelineFromFile(t *testing.T) {
 	}()
 	assert.Nil(t, runPipeline(ctx, pipeline))
 	cancel()
-	pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, "thumbNail")
+	thumbnail.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, "thumbNail")
 	assert.GreaterOrEqual(t, tpipeline.state.createCount, uint(8))
 }
 

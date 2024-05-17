@@ -30,6 +30,7 @@ type ThumbnailPipelineElements struct {
 	converter  *Element
 	scaler     *Element
 	customSink *app.Sink
+	capsfilter *Element
 }
 
 type ThumbnailParams struct {
@@ -57,8 +58,9 @@ type ThumbnailPipeline struct {
 	// source element
 	source *Element
 	// state
-	state *ThumbnailPipelineState
-	mutex sync.RWMutex
+	state    *ThumbnailPipelineState
+	mutex    sync.RWMutex
+	pipeline *Pipeline
 }
 
 // NewThumbnailPipeline create a new thumbnail generation pipeline
@@ -75,26 +77,35 @@ func NewThumbnailPipeline(params ThumbnailParams) (sg *ThumbnailPipeline, err er
 		sg.params.width = 1280
 	}
 
-	sg.Elements.converter = &Element{
+	return
+}
+
+func (th *ThumbnailPipeline) NewElements() error {
+	th.Elements.converter = &Element{
 		Factory: "videoconvert",
 		Name:    "converter",
 	}
 
-	sg.Elements.appsrc = &Element{
+	th.Elements.appsrc = &Element{
 		Factory: "appsrc",
 		Name:    "appsrc",
 		Properties: map[string]interface{}{
-			"is-live":    true,
-			"leaky-type": 1,
+			"is-live": true,
+			//"leaky-type": 1,
 		},
 	}
 
-	sg.Elements.scaler = &Element{
+	th.Elements.scaler = &Element{
 		Factory: "videoscale",
 		Name:    "videoscale",
 	}
 
-	sg.Elements.webpenc = &Element{
+	th.Elements.capsfilter = &Element{
+		Factory: "capsfilter",
+		Name:    "capsfilter",
+	}
+
+	th.Elements.webpenc = &Element{
 		Factory: "webpenc",
 		Name:    "webpenc",
 		Properties: map[string]interface{}{
@@ -102,54 +113,27 @@ func NewThumbnailPipeline(params ThumbnailParams) (sg *ThumbnailPipeline, err er
 		},
 	}
 
-	sg.Elements.sink = &Element{
+	th.Elements.sink = &Element{
 		Factory:    "appsink",
 		Name:       "customSink",
 		Properties: map[string]interface{}{},
 	}
 
-	return
-}
-
-func (th *ThumbnailPipeline) Prepare(pipeline *Pipeline) error {
-	spElements := []*Element{
-		th.Elements.appsrc,
-		th.Elements.webpenc,
-		th.Elements.sink,
-		th.Elements.converter,
-		th.Elements.scaler,
-	}
-	pipeline.AddElements(spElements...)
-	return nil
-}
-
-func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
-	links := []LinkWithCaps{
-		{th.Elements.appsrc, th.Elements.converter, nil},
-		{th.Elements.converter, th.Elements.scaler, nil},
-		{th.Elements.scaler, th.Elements.webpenc, th.params.Caps()},
-		{th.Elements.webpenc, th.Elements.sink, nil},
-	}
-	for _, link := range links {
-		if link.filter == nil {
-			if err := link.left.Link(link.right); err != nil {
-				return err
-			}
-		} else {
-			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
-				return err
-			}
+	elements := th.allElements()
+	for _, element := range elements {
+		err := element.Build()
+		if err != nil {
+			return err
 		}
 	}
 
 	src := app.SrcFromElement(th.Elements.appsrc.el)
+
 	th.Elements.src = src
 
 	th.Elements.customSink = app.SinkFromElement(th.Elements.sink.el)
-
 	th.Elements.customSink.SetCallbacks(&app.SinkCallbacks{
 		NewSampleFunc: func(sink *app.Sink) gst.FlowReturn {
-
 			// Pull the sample that triggered this callback
 			sample := sink.PullSample()
 			if sample == nil {
@@ -190,7 +174,52 @@ func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
 			return gst.FlowOK
 		},
 	})
+	return nil
+}
 
+func (th *ThumbnailPipeline) allElements() []*Element {
+	spElements := []*Element{
+		th.Elements.appsrc,
+		th.Elements.webpenc,
+		th.Elements.capsfilter,
+		th.Elements.sink,
+		th.Elements.converter,
+		th.Elements.scaler,
+	}
+	return spElements
+}
+
+func (th *ThumbnailPipeline) allGSTElements() []*gst.Element {
+	spElements := []*gst.Element{
+		th.Elements.appsrc.el,
+		th.Elements.webpenc.el,
+		th.Elements.capsfilter.el,
+		th.Elements.sink.el,
+		th.Elements.converter.el,
+		th.Elements.scaler.el,
+	}
+	return spElements
+}
+
+func (th *ThumbnailPipeline) links() []LinkWithCaps {
+	links := []LinkWithCaps{
+		{th.Elements.appsrc, th.Elements.converter, nil},
+		{th.Elements.converter, th.Elements.scaler, nil},
+		{th.Elements.scaler, th.Elements.capsfilter, nil},
+		{th.Elements.capsfilter, th.Elements.webpenc, nil},
+		{th.Elements.webpenc, th.Elements.sink, nil},
+	}
+	return links
+}
+
+func (th *ThumbnailPipeline) Prepare(pipeline *Pipeline) error {
+	err := th.NewElements()
+	pipeline.AddElements(th.allElements()...)
+	return err
+}
+
+func (th *ThumbnailPipeline) Build(pipeline *Pipeline) error {
+	th.pipeline = pipeline
 	return nil
 }
 
@@ -217,16 +246,96 @@ func (th *ThumbnailPipeline) Connect(source *Element) error {
 	defer th.mutex.Unlock()
 	th.source = source
 	pad := th.source.el.GetStaticPad("src")
+	caps := pad.GetCurrentCaps()
+	if caps == nil {
+		return errors.New("source does not have caps")
+	}
+	unlink := false
+	if th.state.currentProbe != 0 {
+		unlink = true
+		pad.RemoveProbe(th.state.currentProbe)
+	}
 	th.state.currentProbe = pad.AddProbe(gst.PadProbeTypeBuffer, func(pad *gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		th.mutex.Lock()
 		defer th.mutex.Unlock()
 
 		if th.state.frameBuffer == nil {
-			th.state.frameBuffer = info.GetBuffer()
-			th.state.frameBuffer.Ref()
+			if frameBuffer := info.GetBuffer(); frameBuffer != nil {
+				th.state.frameBuffer = frameBuffer
+				th.state.frameBuffer.Ref()
+			}
 		}
 		return gst.PadProbeOK
 	})
+	var err error
+	err = th.pipeline.pipeline.SetState(gst.StateNull)
+	if err != nil {
+		return err
+	}
+	err = th.Elements.src.SetState(gst.StateNull)
+	if err != nil {
+		return err
+	}
+	if unlink {
+		links := th.links()
+		for _, link := range links {
+			err := link.left.el.SetState(gst.StateNull)
+			if err != nil {
+				return err
+			}
+			err = link.right.el.SetState(gst.StateNull)
+			if err != nil {
+				return err
+			}
+			err = link.left.Unlink(link.right)
+			if err != nil {
+				return err
+			}
+		}
+		for _, ele := range th.allElements() {
+			err := th.pipeline.pipeline.Remove(ele.el)
+			if err != nil {
+				return err
+			}
+		}
+
+		err = th.NewElements()
+		if err != nil {
+			return err
+		}
+		err = th.pipeline.pipeline.AddMany(th.allGSTElements()...)
+		if err != nil {
+			return err
+		}
+	}
+	err = th.Elements.capsfilter.el.SetProperty("caps", th.params.Caps())
+	if err != nil {
+		return err
+	}
+	th.Elements.src.SetCaps(caps)
+	err = th.Elements.appsrc.el.SetState(gst.StatePlaying)
+	if err != nil {
+		return err
+	}
+	links := th.links()
+	for _, link := range links {
+		link.left.el.SyncStateWithParent()
+		if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
+			return err
+		}
+	}
+	th.Elements.sink.el.SyncStateWithParent()
+	if th.state.frameBuffer != nil {
+		th.state.frameBuffer.Unref()
+	}
+	th.state.frameBuffer = nil
+	if err != nil {
+		return err
+	}
+	err = th.pipeline.pipeline.SetState(gst.StatePlaying)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -247,7 +356,7 @@ func (th *ThumbnailPipeline) flush() {
 	}
 	ret := th.Elements.src.PushBuffer(th.state.frameBuffer)
 	if ret != gst.FlowOK {
-		log.Err(errors.New("Flow return is not ok")).Msg(ret.String())
+		log.Err(errors.New("Flow return is not ok")).Str("state", th.Elements.appsrc.el.GetCurrentState().String()).Msg(ret.String())
 	}
 	th.state.frameBuffer.Unref()
 	th.state.frameBuffer = nil
