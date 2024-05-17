@@ -3,10 +3,12 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/go-gst/go-glib/glib"
+	"github.com/go-gst/go-gst/gst"
 	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 )
@@ -136,6 +138,9 @@ func (cctv *CCTVPipeline) Start(ctx context.Context) error {
 				pipeline.Finish(ctx)
 				complete <- struct{}{}
 			}()
+			if _, ok := os.LookupEnv("GST_DEBUG_DUMP_DOT_DIR"); ok {
+				go DebugGSTState(ctx, pipeline, pipeline.name)
+			}
 
 			select {
 			case <-ctx.Done():
@@ -188,4 +193,18 @@ func (cctv *CCTVPipeline) Stop() error {
 		errors = append(errors, err)
 	}
 	return multierr.Combine(errors...)
+}
+
+func DebugGSTState(ctx context.Context, pipeline *Pipeline, output string) {
+outer:
+	for {
+		pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, output)
+		select {
+		case <-ctx.Done():
+			break outer
+		case <-time.After(time.Second * 1):
+			break
+		}
+	}
+	pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, output)
 }

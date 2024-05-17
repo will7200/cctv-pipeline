@@ -263,6 +263,7 @@ func (sg *SegmentationPipeline) HandleStreamChange(newState SegmentationPipeline
 			Factory: "avdec_h265",
 			Name:    "decoder",
 		}
+		sg.Elements.encoder.Factory = "x265enc"
 		elements := []*Element{
 			sg.Elements.decoder,
 			sg.Elements.encoder,
@@ -282,13 +283,23 @@ func (sg *SegmentationPipeline) HandleStreamChange(newState SegmentationPipeline
 			{sg.Elements.decoder, sg.Elements.converter, nil},
 			{sg.Elements.converter, sg.Elements.encoder, nil},
 			{sg.Elements.encoder, sg.Elements.parser, nil},
+			{sg.Elements.parser, sg.Elements.sink, nil},
 		}
 		for _, link := range links {
+			link.left.el.SyncStateWithParent()
 			if err := link.left.LinkFiltered(link.right, link.filter); err != nil {
 				return err
 			}
 		}
 		sg.Elements.decoder.el.SyncStateWithParent()
+		// emit that we get a new source
+		if sg.params.onNewSource != nil {
+			sg.params.onNewSource(sg.Elements.decoder)
+			pad := sg.Elements.decoder.el.GetStaticPad("src")
+			_, _ = pad.Connect("notify::caps", func(pad *gst.Pad, parameter *glib.ParamSpec) {
+				sg.params.onNewSource(sg.Elements.decoder)
+			})
+		}
 	default:
 		return errors.New(fmt.Sprintf("Encoding not supported %s", newState.encodingName))
 	}
@@ -347,7 +358,8 @@ func (sg *SegmentationPipeline) Build(pipeline *Pipeline) error {
 		err = sg.HandleStreamChange(SegmentationPipelineState{encodingName: encodingName})
 		if err != nil {
 			log.Err(err).Msg("Unable to handle stream change")
-			pipeline.Quit()
+			msg := gst.NewErrorMessage(sg.Elements.bin, gst.NewGError(2, err), "unable to handle stream change", nil)
+			pipeline.pipeline.GetPipelineBus().Post(msg)
 		}
 		err = pipeline.pipeline.SetState(gst.StatePlaying)
 		if err != nil {

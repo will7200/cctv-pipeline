@@ -7,7 +7,6 @@ require (
 	github.com/go-gst/go-glib v1.0.1
 	github.com/go-gst/go-gst v1.0.0
 	github.com/google/uuid v1.6.0
-	github.com/joho/godotenv v1.5.1
 	github.com/pion/rtp v1.8.7-0.20240429002300-bc5124c9d0d0
 	github.com/rs/zerolog v1.32.0
 	github.com/spf13/pflag v1.0.5

@@ -206,7 +206,8 @@ func (s *StreamPipeline) Build(pipeline *Pipeline) error {
 		err = s.HandleStreamChange(StreamPipelineState{encodingName: encodingName})
 		if err != nil {
 			log.Err(err).Msg("Unable to handle stream change")
-			pipeline.Quit()
+			msg := gst.NewErrorMessage(s.Elements.bin, gst.NewGError(2, err), "unable to handle stream change", nil)
+			pipeline.pipeline.GetPipelineBus().Post(msg)
 		}
 		err = pipeline.pipeline.SetState(gst.StatePlaying)
 		if err != nil {

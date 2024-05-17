@@ -8,7 +8,6 @@ import (
 	"time"
 
 	description2 "github.com/bluenviron/gortsplib/v4/pkg/description"
-	"github.com/go-gst/go-gst/gst"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,7 +18,7 @@ func TestCCTVPipeline(tt *testing.T) {
 		sinkLocation string
 	}{
 		{`x264enc`, `rtsp://localhost:9000/stream`, `rtsp://localhost:9001/stream`},
-		//{`x264enc`, `rtsp://localhost:9002/stream`, `rtsp://localhost:9003/stream`},
+		{`x265enc`, `rtsp://localhost:9002/stream`, `rtsp://localhost:9003/stream`},
 	}
 
 	for _, test := range tests {
@@ -99,18 +98,4 @@ func TestCCTVPipeline(tt *testing.T) {
 			assert.Equal(t, desp.Medias[0].Formats[0].Codec(), "MPEG-TS")
 		})
 	}
-}
-
-func DebugGSTState(ctx context.Context, pipeline *Pipeline, output string) {
-outer:
-	for {
-		pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, output)
-		select {
-		case <-ctx.Done():
-			break outer
-		case <-time.After(time.Second * 1):
-			break
-		}
-	}
-	pipeline.pipeline.DebugBinToDotFileWithTs(gst.DebugGraphShowAll, output)
 }
