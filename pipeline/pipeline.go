@@ -88,7 +88,7 @@ func (p *Pipeline) AddPartialPipeline(partial PartialPipeline) {
 }
 
 // Start the pipeline
-func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
+func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) (rerr error) {
 	var err error
 	err = p.Build()
 	if err != nil {
@@ -110,6 +110,7 @@ func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
 			if debug := err.DebugString(); debug != "" {
 				logger.Debug().Msg(debug)
 			}
+			rerr = err
 			mainLoop.Quit()
 		default:
 			// All messages implement a Stringer. However, this is
@@ -139,7 +140,8 @@ func (p *Pipeline) Start(ctx context.Context, mainLoop *glib.MainLoop) error {
 	}
 
 	// Block on the main loop
-	return mainLoop.RunError()
+	mainLoop.RunError()
+	return rerr
 }
 
 func (p *Pipeline) Finish(ctx context.Context) {

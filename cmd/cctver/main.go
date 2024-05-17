@@ -36,11 +36,11 @@ var (
 
 // cctv pipeline specific
 var (
-	sourceLocation                  = flagSet.StringP("source-location", "sl", "", "SourceLocation")
+	sourceLocation                  = flagSet.StringP("source-location", "r", "", "SourceLocation")
 	destinationLocation             = flagSet.StringP("destination-location", "t", "", "DestinationLocation")
 	cameraID                        = flagSet.StringP("camera-id", "c", "", "CameraID")
 	segmentBasePath                 = flagSet.StringP("segment-base-path", "b", "", "SegmentBasePath")
-	targetVideoSegmentationDuration = flagSet.DurationP("segmentation-duration", "sd", time.Second*10, "TargetVideoSegmentationDuration")
+	targetVideoSegmentationDuration = flagSet.DurationP("segmentation-duration", "z", time.Second*10, "TargetVideoSegmentationDuration")
 )
 
 // flagNameFromEnvironmentName gets the variable from the environment
@@ -97,6 +97,8 @@ func main() {
 	if *gstDebug {
 		gst.SetLogFunction(pipeline.GSTLogFunction)
 	}
+
+	gst.Init(nil)
 
 	cctvPipeline, err := pipeline.NewCCTVPipeline(pipeline.CCTVPipelineParams{
 		SourceLocation:                  *sourceLocation,
